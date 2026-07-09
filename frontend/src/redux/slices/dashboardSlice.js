@@ -11,11 +11,13 @@ export const fetchDashboard = createAsyncThunk('dashboard/fetch', async (_, { re
 })
 
 const initialState = {
-  stats: { total_hcps: 0, interactions_today: 0, pending_followups: 0, weekly_meetings: 0 },
+  total_hcps: 0,
+  interactions_today: 0,
+  pending_followups: 0,
+  weekly_meetings: 0,
   recentActivities: [],
   upcomingFollowups: [],
-  weeklyData: [],
-  monthlyData: [],
+  weeklyActivity: [],
   loading: false,
   error: null,
 }
@@ -29,11 +31,13 @@ const dashboardSlice = createSlice({
       .addCase(fetchDashboard.pending, (state) => { state.loading = true; state.error = null })
       .addCase(fetchDashboard.fulfilled, (state, action) => {
         state.loading = false
-        state.stats = action.payload.stats
+        state.total_hcps = action.payload.total_hcps
+        state.interactions_today = action.payload.interactions_today
+        state.pending_followups = action.payload.pending_followups
+        state.weekly_meetings = action.payload.weekly_meetings
         state.recentActivities = action.payload.recent_activities
         state.upcomingFollowups = action.payload.upcoming_followups
-        state.weeklyData = action.payload.weekly_data
-        state.monthlyData = action.payload.monthly_data
+        state.weeklyActivity = action.payload.weekly_activity
       })
       .addCase(fetchDashboard.rejected, (state, action) => { state.loading = false; state.error = action.payload })
   },

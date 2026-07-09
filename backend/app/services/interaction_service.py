@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, cast, Date, text
+from sqlalchemy import func
 from datetime import date, datetime, timedelta
 from typing import Optional, List, Dict, Any
 from app.models.interaction import Interaction
@@ -98,40 +98,72 @@ def delete_interaction(db: Session, interaction_id: int, user_id: int) -> bool:
 
 def get_dashboard_data(db: Session, user_id: int) -> Dict[str, Any]:
     today = date.today()
-    yesterday = today - timedelta(days=1)
-    week_start = today - timedelta(days=today.weekday())
-    last_week_start = week_start - timedelta(days=7)
-    last_week_end = week_start - timedelta(days=1)
-    month_start = today.replace(day=1)
-    last_month_start = (month_start - timedelta(days=1)).replace(day=1)
-    last_month_end = month_start - timedelta(days=1)
+    seven_days_ago = today - timedelta(days=7)
+    weekday_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-    total_hcps = db.query(HCP).filter(HCP.id.in_(db.query(Interaction.hcp_id).filter(Interaction.created_by == user_id))).count()
-    hcps_last_month = db.query(HCP).filter(HCP.id.in_(db.query(Interaction.hcp_id).filter(Interaction.created_by == user_id, Interaction.created_at <= last_month_end))).count()
-    total_hcps_trend = round(((total_hcps - hcps_last_month) / hcps_last_month * 100)) if hcps_last_month > 0 else (100 if total_hcps > 0 else 0)
+    total_hcps = db.query(Interaction.hcp_id).filter(
+        Interaction.created_by == user_id,
+        Interaction.hcp_id.isnot(None)
+    ).distinct().count()
 
-    interactions_today = db.query(Interaction).filter(Interaction.created_by == user_id, cast(Interaction.interaction_date, Date) == today).count()
-    interactions_yesterday = db.query(Interaction).filter(Interaction.created_by == user_id, cast(Interaction.interaction_date, Date) == yesterday).count()
-    interactions_today_trend = round(((interactions_today - interactions_yesterday) / interactions_yesterday * 100)) if interactions_yesterday > 0 else (100 if interactions_today > 0 else 0)
+    interactions_today = db.query(Interaction).filter(
+        Interaction.created_by == user_id,
+        func.date(Interaction.created_at) == today
+    ).count()
 
-    pending_followups = db.query(Interaction).filter(Interaction.created_by == user_id, Interaction.follow_up_date >= today).count()
-    
-    weekly_meetings = db.query(Interaction).filter(Interaction.created_by == user_id, Interaction.created_at >= week_start).count()
-    last_weekly_meetings = db.query(Interaction).filter(Interaction.created_by == user_id, Interaction.created_at >= last_week_start, Interaction.created_at <= last_week_end).count()
-    weekly_meetings_trend = round(((weekly_meetings - last_weekly_meetings) / last_weekly_meetings * 100)) if last_weekly_meetings > 0 else (100 if weekly_meetings > 0 else 0)
+    pending_followups = db.query(Interaction).filter(
+        Interaction.created_by == user_id,
+        Interaction.follow_up_date >= today
+    ).count()
+
+    weekly_meetings = db.query(Interaction).filter(
+        Interaction.created_by == user_id,
+        Interaction.created_at >= seven_days_ago
+    ).count()
+
+    weekly_activity_raw = (
+        db.query(
+            func.date(Interaction.created_at).label("day"),
+            func.count(Interaction.id).label("count")
+        )
+        .filter(
+            Interaction.created_by == user_id,
+            Interaction.created_at >= seven_days_ago
+        )
+        .group_by(func.date(Interaction.created_at))
+        .order_by(func.date(Interaction.created_at))
+        .all()
+    )
+    activity_by_date = {str(row.day): row.count for row in weekly_activity_raw}
+    weekly_activity = []
+    for i in range(7):
+        day = today - timedelta(days=6 - i)
+        day_str = str(day)
+        weekly_activity.append({
+            "day": weekday_names[day.weekday()],
+            "date": day_str,
+            "count": activity_by_date.get(day_str, 0),
+        })
 
     recent = (
-        db.query(Interaction, HCP.doctor_name)
+        db.query(Interaction, HCP.doctor_name, HCP.hospital)
         .join(HCP, Interaction.hcp_id == HCP.id, isouter=True)
         .filter(Interaction.created_by == user_id)
         .order_by(Interaction.created_at.desc())
-        .limit(5)
+        .limit(10)
         .all()
     )
-    recent_activities = [
-        {"id": r.Interaction.id, "doctor_name": r.doctor_name, "interaction_type": r.Interaction.interaction_type, "created_at": r.Interaction.created_at.isoformat() if r.Interaction.created_at else None}
-        for r in recent
-    ]
+    recent_activities = []
+    for r in recent:
+        created = r.Interaction.created_at
+        recent_activities.append({
+            "id": r.Interaction.id,
+            "doctor_name": r.doctor_name,
+            "interaction_type": r.Interaction.interaction_type,
+            "hospital": r.hospital,
+            "date": str(created.date()) if created else None,
+            "time": created.strftime("%I:%M %p") if created else None,
+        })
 
     upcoming = (
         db.query(Interaction, HCP.doctor_name)
@@ -146,37 +178,13 @@ def get_dashboard_data(db: Session, user_id: int) -> Dict[str, Any]:
         for u in upcoming
     ]
 
-    weekly_data_raw = (
-        db.query(func.date(Interaction.created_at).label("day"), func.count(Interaction.id).label("count"))
-        .filter(Interaction.created_by == user_id, Interaction.created_at >= week_start)
-        .group_by(func.date(Interaction.created_at))
-        .order_by(func.date(Interaction.created_at))
-        .all()
-    )
-    weekly_data = [{"day": str(w.day), "count": w.count} for w in weekly_data_raw]
-
-    monthly_data_raw = (
-        db.query(Interaction.interaction_date, func.count(Interaction.id).label("count"))
-        .filter(Interaction.created_by == user_id, Interaction.interaction_date >= month_start)
-        .group_by(Interaction.interaction_date)
-        .order_by(Interaction.interaction_date)
-        .all()
-    )
-    monthly_data = [{"day": str(m.interaction_date), "count": m.count} for m in monthly_data_raw]
-
     return {
-        "stats": {
-            "total_hcps": total_hcps, 
-            "total_hcps_trend": total_hcps_trend,
-            "interactions_today": interactions_today, 
-            "interactions_today_trend": interactions_today_trend,
-            "pending_followups": pending_followups, 
-            "weekly_meetings": weekly_meetings,
-            "weekly_meetings_trend": weekly_meetings_trend
-        },
+        "total_hcps": total_hcps,
+        "interactions_today": interactions_today,
+        "pending_followups": pending_followups,
+        "weekly_meetings": weekly_meetings,
+        "weekly_activity": weekly_activity,
         "recent_activities": recent_activities,
         "upcoming_followups": upcoming_followups,
-        "weekly_data": weekly_data,
-        "monthly_data": monthly_data,
     }
 

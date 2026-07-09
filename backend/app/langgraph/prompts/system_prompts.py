@@ -43,9 +43,7 @@ HCP_EXTRACTION_PROMPT = """You are an expert Pharmaceutical CRM Assistant.
 
 Extract structured information from a Healthcare Professional (HCP) interaction.
 
-Return ONLY valid JSON.
-
-If any field is missing return null.
+Return ONLY valid JSON. Use proper JSON null for missing fields — NOT the string "null".
 
 Never hallucinate.
 
@@ -55,19 +53,19 @@ Infer sentiment and interest level only if clearly expressed.
 
 Expected JSON schema:
 {
-  "doctor_name": "",
-  "hospital": "",
-  "speciality": "",
-  "interaction_date": "",
-  "meeting_duration": "",
-  "interaction_type": "",
+  "doctor_name": null,
+  "hospital": null,
+  "speciality": null,
+  "interaction_date": null,
+  "meeting_duration": null,
+  "interaction_type": null,
   "products_discussed": [],
   "competitor_products": [],
-  "interest_level": "",
-  "follow_up_date": "",
-  "discussion_notes": "",
-  "sentiment": "",
-  "summary": ""
+  "interest_level": null,
+  "follow_up_date": null,
+  "discussion_notes": null,
+  "sentiment": null,
+  "summary": null
 }
 
 Extraction Rules:
@@ -97,6 +95,37 @@ Discussion Notes: Return detailed notes about the discussion.
 Sentiment: Must be one of: Positive, Neutral, Negative.
 
 Summary: Generate a professional CRM summary (2-4 sentences)."""
+
+STEPWISE_EXTRACTION_PROMPT = """You are collecting a CRM interaction field by field. The user's latest message is below.
+
+IMPORTANT: Return a complete JSON object using the schema. Do NOT return just a field name or a string — return the full JSON object.
+
+Rules:
+- Extract ONLY values that are EXPLICITLY stated in the user's message.
+- If a value is NOT mentioned, set it to JSON null (not the string "null").
+- Do NOT fabricate, infer, or assume any information.
+- Never make up doctor names, hospitals, dates, or any data.
+
+Schema:
+{
+  "doctor_name": null,
+  "hospital": null,
+  "speciality": null,
+  "interaction_date": null,
+  "meeting_duration": null,
+  "interaction_type": null,
+  "products_discussed": [],
+  "competitor_products": [],
+  "interest_level": null,
+  "follow_up_date": null,
+  "discussion_notes": null,
+  "sentiment": null,
+  "summary": null
+}
+
+User message: {text}
+
+JSON output:"""
 
 TITLE_GENERATION_PROMPT = """Generate a professional CRM conversation title based on the first user message. The title must include the doctor name and hospital when present. Maximum 6 words. Make each title distinct and specific — avoid generic titles. Return ONLY the title text, no quotes, no explanation.
 
@@ -155,12 +184,13 @@ Choose ONE intent from this list:
 - general_query: General greeting, question, or anything not in the above categories
 
 Rules:
-- "Show my meetings", "list interactions", "show last 5" → show_history
-- "Search for Metformin", "Find Dr. Ravi", "Show cardiology meetings" → search_interactions
-- "How many this week", "pending follow-ups", "today's tasks" → dashboard_query
-- "Delete Dr. Ravi", "remove interaction" → delete_interaction
-- "Summarize meeting with Dr. X" → summarize (NOT show_history)
-- "What follow-up for Dr. X" → followup_recommendation
+  - "Show my meetings", "list interactions", "show last 5" → show_history
+  - "Search for Metformin", "Find Dr. Ravi", "Show cardiology meetings" → search_interactions
+  - "How many this week", "pending follow-ups", "today's tasks" → dashboard_query
+  - "Delete Dr. Ravi", "remove interaction" → delete_interaction
+  - "Summarize meeting with Dr. X" → summarize (NOT show_history)
+  - "What follow-up for Dr. X" → followup_recommendation
+  - "I forgot something", "add more", "add one more point", "also mention", "missed something" → edit_interaction
 
 Respond with ONLY the intent name, no explanation."""
 
@@ -201,140 +231,3 @@ If asking about follow-ups, mention the specific count.
 Format the answer in clean readable text.
 Maximum 5 sentences."""
 
-
-SALES_ASSISTANT_PROMPT = """You are a helpful sales assistant for a pharmaceutical CRM.
-Help the user log their HCP interactions by understanding natural language.
-Extract all relevant fields and confirm before saving.
-Be concise, professional, and accurate."""
-
-MEDICAL_ENTITY_PROMPT = """Extract medical entities from the given text.
-Return a JSON with:
-- doctor_name: Name of the doctor/HCP
-- hospital: Hospital or clinic name
-- medicines: List of medicines mentioned
-- diseases: List of diseases/conditions
-- symptoms: List of symptoms
-- competitors: List of competitor products/brands
-- brands: List of brand names
-- products: List of products discussed
-- dosage: Any dosage information
-- clinical_topics: List of clinical topics discussed
-
-Extract ONLY what is present in the text. Use null for missing fields."""
-
-SUMMARIZER_PROMPT = """Summarize the following HCP interaction in a professional CRM note.
-Maximum 150 words.
-Include: doctor name, hospital, key discussion points, products mentioned, outcome.
-Format as a clean paragraph suitable for CRM records."""
-
-FOLLOWUP_PROMPT = """Based on the interaction summary provided, recommend a follow-up plan.
-Return as JSON with:
-- next_follow_up: When to follow up (date or relative time)
-- priority: High/Medium/Low
-- talking_points: Array of suggested talking points
-- suggested_products: Array of products to discuss
-- reasoning: Brief explanation for these recommendations"""
-
-HCP_EXTRACTION_PROMPT = """You are an expert Pharmaceutical CRM Assistant.
-
-Extract structured information from a Healthcare Professional (HCP) interaction.
-
-Return ONLY valid JSON.
-
-If any field is missing return null.
-
-Never hallucinate.
-
-Always preserve exact dates, names and values.
-
-Infer sentiment and interest level only if clearly expressed.
-
-Expected JSON schema:
-{
-  "doctor_name": "",
-  "hospital": "",
-  "speciality": "",
-  "interaction_date": "",
-  "meeting_duration": "",
-  "interaction_type": "",
-  "products_discussed": [],
-  "competitor_products": [],
-  "interest_level": "",
-  "follow_up_date": "",
-  "discussion_notes": "",
-  "sentiment": "",
-  "summary": ""
-}
-
-Extraction Rules:
-
-Doctor Name: Extract doctor's full name.
-
-Hospital: Extract hospital name.
-
-Speciality: Extract doctor's speciality.
-
-Interaction Date: Extract meeting date. Support: Today, Yesterday, Tomorrow, dd-mm-yyyy, dd/mm/yyyy, Month names.
-
-Meeting Duration: Extract minutes or hours. Examples: "30 minutes", "45 mins", "1 hour".
-
-Interaction Type: Must be one of: Initial Visit, Follow-up Visit, Product Discussion, Product Demo, Conference, Online Meeting, Phone Call, Other.
-
-Products Discussed: Return array of product names discussed.
-
-Competitor Products: Return array of competitor product names.
-
-Interest Level: Must be one of: High, Medium, Low. Infer correctly. "Very interested" -> High, "Some interest" -> Medium, "Not interested" -> Low.
-
-Follow-up Date: Extract date if mentioned.
-
-Discussion Notes: Return detailed notes about the discussion.
-
-Sentiment: Must be one of: Positive, Neutral, Negative.
-
-Summary: Generate a professional CRM summary (2-4 sentences)."""
-
-TITLE_GENERATION_PROMPT = """Generate a professional CRM conversation title based on the first user message. The title must include the doctor name and hospital when present. Maximum 6 words. Make each title distinct and specific — avoid generic titles. Return ONLY the title text, no quotes, no explanation.
-
-Examples:
-Message: "Log a meeting with Dr. Priya Sharma at Apollo Hospital. We discussed Metformin 500mg for diabetes."
-Title: Dr. Priya Sharma – Apollo
-
-Message: "Log interaction: visited Dr. Sneha Patel at Fortis, discussed Lipid profile and Atorvastatin"
-Title: Dr. Sneha Patel – Fortis
-
-Message: "What should I follow up on with Dr. Ravi?"
-Title: Dr. Ravi Follow-up Plan
-
-Message: "Meeting with Dr. Mehta at Fortis. He was interested in the new insulin."
-Title: Dr. Mehta – Fortis Insulin
-
-Message: "Extract entities from: Patient has type 2 diabetes, prescribed Metformin"
-Title: Metformin Entity Extraction
-
-Message: "Schedule a visit to Apollo Hospital next week"
-Title: Apollo Hospital Visit
-
-Message: "Summarize the meeting with Dr. Khan about the new vaccine"
-Title: Dr. Khan Vaccine Summary
-
-Message: "Follow up with Dr. Sharma regarding the insulin prescription"
-Title: Dr. Sharma Insulin Follow-up
-
-Message: "Good morning"
-Title: General Inquiry
-
-Message: "Edit the interaction with Dr. Patel at Fortis from yesterday"
-Title: Edit – Dr. Patel Fortis"""
-
-INTENT_DETECTION_PROMPT = """Classify the intent of the following user message.
-Choose ONE intent from:
-- log_interaction: User wants to log a new interaction with an HCP
-- edit_interaction: User wants to modify an existing interaction
-- summarize: User wants a summary
-- followup_recommendation: User wants follow-up suggestions
-- extract_entities: User wants medical entity extraction
-- sentiment_analysis: User wants sentiment analysis
-- general_query: General question or greeting
-
-Respond with ONLY the intent name, no explanation."""

@@ -3,18 +3,13 @@ from typing import List, Optional, Dict, Any
 from datetime import date
 
 
-class DashboardStats(BaseModel):
-    total_hcps: int
-    interactions_today: int
-    pending_followups: int
-    weekly_meetings: int
-
-
 class RecentActivity(BaseModel):
     id: int
     doctor_name: Optional[str] = None
     interaction_type: Optional[str] = None
-    created_at: Optional[str] = None
+    hospital: Optional[str] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
 
 
 class UpcomingFollowUp(BaseModel):
@@ -25,8 +20,10 @@ class UpcomingFollowUp(BaseModel):
 
 
 class DashboardResponse(BaseModel):
-    stats: DashboardStats
+    total_hcps: int
+    interactions_today: int
+    pending_followups: int
+    weekly_meetings: int
+    weekly_activity: List[Dict[str, Any]]
     recent_activities: List[RecentActivity]
     upcoming_followups: List[UpcomingFollowUp]
-    weekly_data: List[Dict[str, Any]]
-    monthly_data: List[Dict[str, Any]]

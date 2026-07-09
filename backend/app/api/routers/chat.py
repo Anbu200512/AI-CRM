@@ -1,3 +1,5 @@
+import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +19,7 @@ from app.config.settings import settings
 from langchain_groq import ChatGroq
 from app.utils.auth import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 llm = ChatGroq(api_key=settings.GROQ_API_KEY, model="llama-3.1-8b-instant")
@@ -74,12 +77,24 @@ def chat(data: ChatMessage, db: Session = Depends(get_db), current_user: User = 
     parsed_pending_deletion = None
     if conv.extracted_data:
         try:
-            import json
             stored = json.loads(conv.extracted_data)
-            parsed_entities = stored.get("entities", stored) if isinstance(stored, dict) and "entities" in stored else stored
-            parsed_pending_deletion = stored.get("pending_deletion") if isinstance(stored, dict) else None
-        except Exception:
-            pass
+            if isinstance(stored, dict):
+                if "entities" in stored:
+                    raw = stored["entities"]
+                    parsed_entities = raw if isinstance(raw, dict) else {}
+                    if not isinstance(raw, dict):
+                        logger.warning("stored entities is not a dict, type=%s, resetting", type(raw).__name__)
+                else:
+                    parsed_entities = stored
+                parsed_pending_deletion = stored.get("pending_deletion")
+            else:
+                logger.warning("conv.extracted_data JSON is not a dict, type=%s, resetting", type(stored).__name__)
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse conv.extracted_data JSON: %s", e)
+        except Exception as e:
+            logger.error("Unexpected error restoring entities: %s", e)
+
+    logger.info("Restored entities keys: %s", list(parsed_entities.keys()))
 
     initial_state = {
         "conversation": conversation_history,
@@ -95,8 +110,24 @@ def chat(data: ChatMessage, db: Session = Depends(get_db), current_user: User = 
         "user_id": current_user.id,
         "pending_deletion": parsed_pending_deletion,
     }
-    result = agent_app.invoke(initial_state)
-    ai_response = result.get("response", "I couldn't process that request.")
+    try:
+        result = agent_app.invoke(initial_state)
+        ai_response = result.get("response", "I couldn't process that request.")
+    except Exception as e:
+        ai_msg = Message(
+            conversation_id=conv.id,
+            role="assistant",
+            content=f"Sorry, I encountered an error processing your request. Please try again. ({str(e)})",
+        )
+        db.add(ai_msg)
+        db.commit()
+        return ChatResponse(
+            response=ai_msg.content,
+            extracted={},
+            tool_used="general",
+            conversation_id=conv.id,
+            title=conv.title,
+        )
 
     ai_msg = Message(
         conversation_id=conv.id,
@@ -109,12 +140,13 @@ def chat(data: ChatMessage, db: Session = Depends(get_db), current_user: User = 
         generated = generate_title(data.message)
         conv.title = generated
 
-    import json
-    new_entities = result.get("entities", {})
+    new_entities = result.get("entities")
+    if not isinstance(new_entities, dict):
+        logger.warning("result entities is not a dict, type=%s, defaulting to {}", type(new_entities).__name__)
+        new_entities = {}
     new_pending = result.get("pending_deletion")
     tool_used = result.get("tool_used", "general")
 
-    # Clear extracted data when interaction is saved or deleted successfully
     if tool_used == "log_interaction" and not new_entities:
         conv.extracted_data = None
     elif new_entities or new_pending:

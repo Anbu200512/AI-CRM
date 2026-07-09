@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from typing import Literal, Optional
 from langgraph.graph import StateGraph, END
@@ -9,6 +10,8 @@ from app.langgraph.prompts.system_prompts import (
     SYSTEM_PROMPT, INTENT_DETECTION_PROMPT, DOCTOR_NAME_EXTRACT_PROMPT
 )
 from app.langgraph.tools.log_interaction import log_interaction_tool
+
+logger = logging.getLogger(__name__)
 from app.langgraph.tools.edit_interaction import edit_interaction_tool
 from app.langgraph.tools.summarize import summarize_tool
 from app.langgraph.tools.followup import followup_tool
@@ -24,6 +27,19 @@ llm = ChatGroq(api_key=settings.GROQ_API_KEY, model="llama-3.1-8b-instant")
 
 CONFIRM_WORDS = {"yes", "confirm", "delete", "proceed", "go ahead", "sure", "ok", "okay", "do it"}
 CANCEL_WORDS = {"no", "cancel", "abort", "stop", "nevermind", "never mind"}
+GREETING_WORDS = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening", "greetings", "howdy"]
+FORGOT_PATTERNS = ["forgot", "add more", "add one more", "add another", "missed something", "also want", "also need"]
+
+
+def _is_greeting(text: str) -> bool:
+    t = text.strip().lower()
+    words = t.split()
+    if len(words) > 5:
+        return False
+    for g in GREETING_WORDS:
+        if t == g or t.startswith(g + " ") or t.endswith(" " + g) or (" " + g + " ") in " " + t + " ":
+            return True
+    return False
 
 
 def _extract_doctor_name(message: str) -> Optional[str]:
@@ -38,12 +54,33 @@ def _extract_doctor_name(message: str) -> Optional[str]:
 
 def _get_full_conversation_text(messages: list) -> str:
     """Build full conversation context for extraction."""
-    return "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages[-10:]])
+    recent = messages[-10:] if isinstance(messages, list) else []
+    parts = []
+    for m in recent:
+        if isinstance(m, dict):
+            role = m.get("role", "unknown").upper()
+            content = m.get("content", "")
+            parts.append(f"{role}: {content}")
+    return "\n".join(parts)
 
 
 def detect_intent(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
-    last_message = messages[-1]["content"] if messages else ""
+    last_message = ""
+    if messages and isinstance(messages, list) and len(messages) > 0:
+        last = messages[-1]
+        if isinstance(last, dict):
+            last_message = last.get("content", "")
+    entities = state.get("entities", {})
+    if not isinstance(entities, dict):
+        logger.warning("entities is not a dict in detect_intent, type=%s, resetting", type(entities).__name__)
+        entities = {}
+
+    # If mid-log-interaction, continue collecting
+    if entities.get("_stage") == "collecting":
+        logger.info("detect_intent: _stage=collecting, routing to log_interaction_node")
+        state["intent"] = "log_interaction"
+        return state
 
     # Check if there's a pending deletion and user is confirming/cancelling
     pending = state.get("pending_deletion")
@@ -57,8 +94,17 @@ def detect_intent(state: AgentState) -> AgentState:
             state["intent"] = "delete_interaction"
         return state
 
-    response = llm.invoke(f"{INTENT_DETECTION_PROMPT}\n\nMessage: {last_message}")
-    intent = response.content.strip().lower()
+    # Check for "forgot something" / "add more" patterns → edit_interaction
+    lower_msg = last_message.strip().lower()
+    if any(p in lower_msg for p in FORGOT_PATTERNS):
+        state["intent"] = "edit_interaction"
+        return state
+
+    try:
+        response = llm.invoke(f"{INTENT_DETECTION_PROMPT}\n\nMessage: {last_message}")
+        intent = response.content.strip().lower()
+    except Exception:
+        intent = "general_query"
     state["intent"] = intent
     return state
 
@@ -99,9 +145,23 @@ def route_intent(state: AgentState) -> str:
 
 def log_interaction_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
-    # Use last user message for extraction, but pass entire state for merging
-    text = messages[-1]["content"] if messages else ""
-    current_state = state.get("entities", {})
+    text = ""
+    if messages and isinstance(messages, list) and len(messages) > 0:
+        last = messages[-1]
+        if isinstance(last, dict):
+            text = last.get("content", "")
+
+    raw_entities = state.get("entities")
+    current_state = raw_entities if isinstance(raw_entities, dict) else {}
+    if not isinstance(raw_entities, dict):
+        logger.warning("entities is not a dict, type=%s, defaulting to {}", type(raw_entities).__name__)
+
+    logger.info(
+        "log_interaction_node: user_text=%.80s, current_state keys=%s, _stage=%s",
+        text,
+        list(current_state.keys()),
+        current_state.get("_stage"),
+    )
 
     result = log_interaction_tool.invoke({
         "conversation_text": text,
@@ -112,23 +172,22 @@ def log_interaction_node(state: AgentState) -> AgentState:
     state["database_result"] = result
     state["tool_used"] = "log_interaction"
 
-    if "merged_state" in result:
-        state["entities"] = result["merged_state"]
-    else:
-        state["entities"] = {k: v for k, v in result.items() if k not in ("success", "interaction_id", "error")}
+    merged = result.get("merged_state")
+    if not isinstance(merged, dict):
+        logger.error("merged_state from tool is not a dict, type=%s", type(merged).__name__)
+        merged = {}
+    state["entities"] = merged
 
-    if result.get("success") is False and "missing_fields" in result:
-        state["response"] = result.get("response_text", "Please provide the missing information.")
-    elif result.get("success"):
-        doc = state["entities"].get("doctor_name", "")
-        state["entities"] = {}  # Clear form state on success
-        state["response"] = (
-            f"✅ Interaction Logged Successfully\n\n"
-            f"Doctor: {doc}\n"
-            f"The interaction has been saved to your CRM. You can view it in Interaction History."
-        )
-    else:
+    if result.get("success") == "partial":
+        state["response"] = result.get("response_text", "")
+    elif result.get("success") is True and merged.get("_stage") == "complete":
+        state["response"] = result.get("response_text", "✅ Interaction Logged Successfully")
+        state["entities"] = {}
+    elif result.get("success") is False:
         state["response"] = f"Failed to log interaction: {result.get('error', 'Unknown error')}"
+        state["entities"] = merged
+    else:
+        state["response"] = "I couldn't process that request. Please try again."
 
     return state
 
@@ -192,7 +251,11 @@ def summarize_node(state: AgentState) -> AgentState:
 
 def followup_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
-    text = messages[-1]["content"] if messages else ""
+    text = ""
+    if messages and isinstance(messages, list) and len(messages) > 0:
+        last = messages[-1]
+        if isinstance(last, dict):
+            text = last.get("content", "")
     doctor_name = _extract_doctor_name(text)
 
     result = followup_tool.invoke({
@@ -207,26 +270,59 @@ def followup_node(state: AgentState) -> AgentState:
         state["response"] = result.get("reasoning", "No previous interaction found.")
         return state
 
+    lines = []
+    lines.append("Follow-up Recommendation")
+    lines.append("")
+
+    doctor = result.get("doctor_name") or doctor_name or "Unknown"
+    lines.append(f"Doctor")
+    lines.append(doctor)
+    lines.append("")
+
+    priority = result.get("priority", "N/A")
+    lines.append(f"Priority")
+    lines.append(priority)
+    lines.append("")
+
+    followup_date = result.get("next_follow_up", "N/A")
+    lines.append(f"Next Follow-up Date")
+    lines.append(followup_date)
+    lines.append("")
+
     tp = result.get("talking_points", [])
-    sp = result.get("suggested_products", [])
-    ce = result.get("clinical_evidence", [])
-    agenda = result.get("next_visit_agenda", [])
-
-    response_parts = [f"🎯 Follow-up Recommendation\n"]
-    response_parts.append(f"Next Follow-up: {result.get('next_follow_up', 'N/A')}")
-    response_parts.append(f"Priority: {result.get('priority', 'N/A')}")
     if tp:
-        response_parts.append("\n📌 Talking Points:\n" + "\n".join([f"• {t}" for t in tp]))
-    if sp:
-        response_parts.append("\n💊 Suggested Products:\n" + "\n".join([f"• {p}" for p in sp]))
-    if ce:
-        response_parts.append("\n🔬 Clinical Evidence:\n" + "\n".join([f"• {c}" for c in ce]))
-    if agenda:
-        response_parts.append("\n📅 Next Visit Agenda:\n" + "\n".join([f"• {a}" for a in agenda]))
-    if result.get("reasoning"):
-        response_parts.append(f"\n💡 {result.get('reasoning')}")
+        lines.append("Talking Points")
+        for t in tp:
+            lines.append(f"  • {t}")
+        lines.append("")
 
-    state["response"] = "\n".join(response_parts)
+    sp = result.get("suggested_products", [])
+    if sp:
+        lines.append("Suggested Products")
+        for p in sp:
+            lines.append(f"  • {p}")
+        lines.append("")
+
+    ce = result.get("clinical_evidence", [])
+    if ce:
+        lines.append("Clinical Evidence")
+        for c in ce:
+            lines.append(f"  • {c}")
+        lines.append("")
+
+    agenda = result.get("next_visit_agenda", [])
+    if agenda:
+        lines.append("Next Visit Agenda")
+        for a in agenda:
+            lines.append(f"  • {a}")
+        lines.append("")
+
+    reasoning = result.get("reasoning")
+    if reasoning:
+        lines.append("Reasoning")
+        lines.append(reasoning)
+
+    state["response"] = "\n".join(lines)
     return state
 
 
@@ -256,11 +352,36 @@ def extract_entities_node(state: AgentState) -> AgentState:
 
 def sentiment_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
-    text = messages[-1]["content"] if messages else ""
+    text = ""
+    if messages and isinstance(messages, list) and len(messages) > 0:
+        last = messages[-1]
+        if isinstance(last, dict):
+            text = last.get("content", "")
     result = sentiment_analysis_tool.invoke({"text": text})
     state["database_result"] = result
     state["tool_used"] = "sentiment_analysis"
-    state["response"] = json.dumps(result, indent=2)
+
+    lines = []
+    lines.append("Sentiment Analysis")
+    lines.append("")
+    lines.append("Sentiment")
+    lines.append(result.get("sentiment", "Neutral"))
+    lines.append("")
+    lines.append("Confidence")
+    lines.append(str(result.get("confidence", "N/A")))
+    lines.append("")
+    lines.append("Interest Level")
+    lines.append(result.get("interest_level", "N/A"))
+    lines.append("")
+    lines.append("Engagement Score")
+    lines.append(str(result.get("engagement_score", "N/A")))
+    phrases = result.get("key_phrases", [])
+    if phrases:
+        lines.append("")
+        lines.append("Key Phrases")
+        for p in phrases:
+            lines.append(f"  • {p}")
+    state["response"] = "\n".join(lines)
     return state
 
 
@@ -268,11 +389,39 @@ def sentiment_node(state: AgentState) -> AgentState:
 
 def classify_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
-    text = messages[-1]["content"] if messages else ""
+    text = ""
+    if messages and isinstance(messages, list) and len(messages) > 0:
+        last = messages[-1]
+        if isinstance(last, dict):
+            text = last.get("content", "")
     result = meeting_classifier_tool.invoke({"text": text})
     state["database_result"] = result
     state["tool_used"] = "meeting_classifier"
-    state["response"] = json.dumps(result, indent=2)
+
+    lines = []
+    lines.append("Meeting Classification")
+    lines.append("")
+    lines.append("Meeting Type")
+    lines.append(result.get("meeting_type", "N/A"))
+    lines.append("")
+    lines.append("Effectiveness")
+    lines.append(result.get("effectiveness", "N/A"))
+    lines.append("")
+    lines.append("Next Action")
+    lines.append(result.get("next_action", "N/A"))
+    topics = result.get("key_topics", [])
+    if topics:
+        lines.append("")
+        lines.append("Key Topics")
+        for t in topics:
+            lines.append(f"  • {t}")
+    recommendations = result.get("recommendations", [])
+    if recommendations:
+        lines.append("")
+        lines.append("Recommendations")
+        for r in recommendations:
+            lines.append(f"  • {r}")
+    state["response"] = "\n".join(lines)
     return state
 
 
@@ -392,8 +541,27 @@ def dashboard_node(state: AgentState) -> AgentState:
 def general_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    response = llm.invoke(f"{SYSTEM_PROMPT}\n\nUser: {text}\n\nRespond helpfully and professionally as a CRM assistant.")
-    state["response"] = response.content
+
+    if _is_greeting(text):
+        state["response"] = (
+            "Hello! I'm your AI Sales Assistant.\n\n"
+            "I can help you:\n"
+            "• Log HCP Interactions\n"
+            "• Edit Interactions\n"
+            "• Search & View History\n"
+            "• Get Dashboard Insights\n"
+            "• Summarize Meetings\n"
+            "• Recommend Follow-ups\n\n"
+            "How can I assist you today?"
+        )
+        state["tool_used"] = "general"
+        return state
+
+    try:
+        response = llm.invoke(f"{SYSTEM_PROMPT}\n\nUser: {text}\n\nRespond helpfully and professionally as a CRM assistant.")
+        state["response"] = response.content
+    except Exception:
+        state["response"] = "I encountered a temporary issue. Please try again."
     state["tool_used"] = "general"
     return state
 

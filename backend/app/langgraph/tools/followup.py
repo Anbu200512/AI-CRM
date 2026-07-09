@@ -32,6 +32,8 @@ def followup_tool(interaction_summary: str, user_id: Optional[int] = None, docto
     start = time.time()
 
     interaction_data = interaction_summary  # fallback
+    result_doctor_name = doctor_name or "Unknown"
+    result_hospital = ""
 
     if user_id:
         db = SessionLocal()
@@ -54,6 +56,8 @@ def followup_tool(interaction_summary: str, user_id: Optional[int] = None, docto
                     f"Discussion: {interaction.discussion or ''}\n"
                     f"Summary: {interaction.summary or ''}"
                 )
+                result_doctor_name = hcp_name
+                result_hospital = hospital
             else:
                 db.close()
                 name_hint = f" for {doctor_name}" if doctor_name and doctor_name.lower() != "unknown" else ""
@@ -66,6 +70,8 @@ def followup_tool(interaction_summary: str, user_id: Optional[int] = None, docto
                     "next_visit_agenda": [],
                     "reasoning": f"No previous interaction found{name_hint}. Please log an interaction first.",
                     "found_in_db": False,
+                    "doctor_name": doctor_name or "Unknown",
+                    "hospital": "",
                 }
         finally:
             db.close()
@@ -90,6 +96,8 @@ def followup_tool(interaction_summary: str, user_id: Optional[int] = None, docto
             "reasoning": response.content,
         }
     result["found_in_db"] = True
+    result["doctor_name"] = result_doctor_name
+    result["hospital"] = result_hospital
 
     db2 = SessionLocal()
     try:
