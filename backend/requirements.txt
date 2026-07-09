@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg[binary]
+python-jose[cryptography]
+python-multipart
+pydantic
+pydantic-settings
+langgraph
+langchain
+langchain-groq
+groq
+httpx
+python-dotenv
+bcrypt==4.0.1
