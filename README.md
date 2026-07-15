@@ -30,7 +30,7 @@ An AI-powered CRM application built for pharmaceutical field representatives to 
 Pharmaceutical field representatives visit dozens of HCPs daily. Traditional interaction logging is manual, unstructured, and time-consuming. This CRM solves that by providing:
 
 - **Dual interaction logging** — structured form or natural language AI chat
-- **14-node LangGraph AI agent** — understands CRM-specific intents and executes tools
+- **6 core AI tools** — Edit, Summarize, Search, Follow-up Recommendation, Delete, and Log Interaction
 - **Rich dashboard** — real-time stats, charts, follow-up tracking via WebSocket
 - **Full CRUD** — create, read, update, delete interactions with search, sort, and pagination
 - **AI-powered insights** — sentiment analysis, meeting classification, follow-up recommendations, entity extraction, summarization
@@ -41,48 +41,48 @@ Pharmaceutical field representatives visit dozens of HCPs daily. Traditional int
 
 ### Frontend
 
-| Library | Version | Purpose |
-|---------|---------|---------|
-| React | 19 | UI framework |
-| Vite | 5.4 | Build tool & dev server |
-| Redux Toolkit | 2.2 | State management |
-| React Router | 6.26 | Client-side routing |
-| Tailwind CSS | 3.4 | Utility-first styling |
-| Framer Motion | 11.3 | Animations & transitions |
-| React Hook Form | 7.53 | Form validation |
-| Recharts | 2.12 | Charting library |
-| Axios | 1.7 | HTTP client |
-| Lucide React | 0.441 | Icon library |
-| React Hot Toast | 2.4 | Toast notifications |
+| Library         | Version | Purpose                  |
+| --------------- | ------- | ------------------------ |
+| React           | 19      | UI framework             |
+| Vite            | 5.4     | Build tool & dev server  |
+| Redux Toolkit   | 2.2     | State management         |
+| React Router    | 6.26    | Client-side routing      |
+| Tailwind CSS    | 3.4     | Utility-first styling    |
+| Framer Motion   | 11.3    | Animations & transitions |
+| React Hook Form | 7.53    | Form validation          |
+| Recharts        | 2.12    | Charting library         |
+| Axios           | 1.7     | HTTP client              |
+| Lucide React    | 0.441   | Icon library             |
+| React Hot Toast | 2.4     | Toast notifications      |
 
 ### Backend
 
-| Library | Purpose |
-|---------|---------|
-| Python FastAPI | Async web framework |
-| SQLAlchemy | ORM & database abstraction |
-| Alembic | Database migrations |
-| psycopg | PostgreSQL adapter |
+| Library                      | Purpose                    |
+| ---------------------------- | -------------------------- |
+| Python FastAPI               | Async web framework        |
+| SQLAlchemy                   | ORM & database abstraction |
+| Alembic                      | Database migrations        |
+| psycopg                      | PostgreSQL adapter         |
 | Pydantic / Pydantic Settings | Data validation & settings |
-| python-jose | JWT token handling |
-| bcrypt | Password hashing |
-| Uvicorn | ASGI server |
+| python-jose                  | JWT token handling         |
+| bcrypt                       | Password hashing           |
+| Uvicorn                      | ASGI server                |
 
 ### AI / LLM
 
-| Library | Purpose |
-|---------|---------|
-| LangGraph | Agent orchestration (StateGraph) |
-| LangChain | LLM framework |
-| LangChain-Groq | Groq API integration |
-| Groq API | LLM provider (Llama 3.1 8B Instant) |
+| Library        | Purpose                             |
+| -------------- | ----------------------------------- |
+| LangGraph      | Agent orchestration (StateGraph)    |
+| LangChain      | LLM framework                       |
+| LangChain-Groq | Groq API integration                |
+| Groq API       | LLM provider (Llama 3.1 8B Instant) |
 
 ### Database
 
-| Environment | Database |
-|-------------|----------|
+| Environment | Database             |
+| ----------- | -------------------- |
 | Development | SQLite (`ai_crm.db`) |
-| Production | PostgreSQL (Neon) |
+| Production  | PostgreSQL (Neon)    |
 
 ---
 
@@ -134,6 +134,7 @@ Pharmaceutical field representatives visit dozens of HCPs daily. Traditional int
 ## Features
 
 ### Core Features
+
 - Dual interaction logging — structured form with 10+ fields OR AI chat
 - Full CRUD for interactions (create, read, update, delete)
 - Search, filter, sort, and paginated interaction history
@@ -143,19 +144,22 @@ Pharmaceutical field representatives visit dozens of HCPs daily. Traditional int
 - Responsive design across desktop, tablet, and mobile
 
 ### AI Features
-- 14-node LangGraph agent with intent detection and routing
-- Stepwise interaction extraction (asks one question at a time for missing fields)
+
+- **6 Core AI Tools:**
+  - **Edit** — Update interactions via natural language commands
+  - **Summarize** — Generate 150-word CRM summaries from meeting notes
+  - **Search** — Find interactions using natural language queries
+  - **Follow-up Recommendation** — Get talking points, priority, and suggested products for next visit
+  - **Delete** — Remove interactions with two-phase confirmation flow
+  - **Log Interaction** — Stepwise extraction, asks one question at a time for missing fields
 - Medical entity extraction (doctors, hospitals, medicines, diseases, symptoms)
 - Sentiment analysis with confidence scores and engagement metrics
 - Meeting classification (type, effectiveness, next action)
-- Follow-up recommendations (talking points, priority, suggested products)
-- Conversation summarization (150-word CRM summaries)
-- Natural language interaction search and editing
 - Dashboard stats via natural language queries
-- Two-phase delete with confirmation flow
 - Conversation title auto-generation
 
 ### UI Features
+
 - Rich AI message formatting (emoji headers, checkmarks, bullets, numbered lists)
 - Animated typing indicator (bouncing dots)
 - Quick action buttons for common tasks
@@ -167,6 +171,7 @@ Pharmaceutical field representatives visit dozens of HCPs daily. Traditional int
 - Glassmorphism card effects
 
 ### Real-Time
+
 - WebSocket connection for live dashboard updates
 - Automatic reconnection with exponential backoff
 - 30-second polling fallback
@@ -176,18 +181,18 @@ Pharmaceutical field representatives visit dozens of HCPs daily. Traditional int
 
 ## Pages & Routes
 
-| Route | Page | Description |
-|-------|------|-------------|
-| `/` | Dashboard | Stats cards (total HCPs, interactions today, pending follow-ups, weekly meetings), weekly activity bar chart, recent activities list, upcoming follow-ups. Auto-refreshes via WebSocket. |
-| `/log-interaction` | Log Interaction | Two tabs: **Structured Form** (react-hook-form with doctor name, hospital, speciality, date, duration, type, products, competitors, interest level, follow-up date, discussion notes) and **AI Conversation** (chat with quick actions, typing indicator, success banner, rich message formatting). |
-| `/history` | Interaction History | Paginated, sortable, searchable table of all interactions. Inline delete with confirmation. |
-| `/interactions/:id` | Interaction Details | Full detail view of a single interaction with all fields in a card grid. Edit and Delete buttons. |
-| `/interactions/:id/edit` | Edit Interaction | Pre-populated form to update summary, discussion, products, competitors, sentiment, interest level, follow-up date, and duration. |
-| `/chat` | Chat Assistant | Full-page AI conversation panel with ChatSidebar (conversation history grouped by Today/Yesterday/Last 7 Days/Older), message history grouped by date, typing indicator, success banner, 8 quick action buttons. |
-| `/settings` | Settings | Profile card with initials avatar, dark mode toggle, sign-out button. |
-| `/login` | Login | Email/password sign-in with show/hide password toggle and error display. |
-| `/register` | Register | Name, email, password, role registration form. |
-| `*` | 404 | Not found page with gradient background and "Go Home" link. |
+| Route                    | Page                | Description                                                                                                                                                                                                                                                                                         |
+| ------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`                      | Dashboard           | Stats cards (total HCPs, interactions today, pending follow-ups, weekly meetings), weekly activity bar chart, recent activities list, upcoming follow-ups. Auto-refreshes via WebSocket.                                                                                                            |
+| `/log-interaction`       | Log Interaction     | Two tabs: **Structured Form** (react-hook-form with doctor name, hospital, speciality, date, duration, type, products, competitors, interest level, follow-up date, discussion notes) and **AI Conversation** (chat with quick actions, typing indicator, success banner, rich message formatting). |
+| `/history`               | Interaction History | Paginated, sortable, searchable table of all interactions. Inline delete with confirmation.                                                                                                                                                                                                         |
+| `/interactions/:id`      | Interaction Details | Full detail view of a single interaction with all fields in a card grid. Edit and Delete buttons.                                                                                                                                                                                                   |
+| `/interactions/:id/edit` | Edit Interaction    | Pre-populated form to update summary, discussion, products, competitors, sentiment, interest level, follow-up date, and duration.                                                                                                                                                                   |
+| `/chat`                  | Chat Assistant      | Full-page AI conversation panel with ChatSidebar (conversation history grouped by Today/Yesterday/Last 7 Days/Older), message history grouped by date, typing indicator, success banner, 8 quick action buttons.                                                                                    |
+| `/settings`              | Settings            | Profile card with initials avatar, dark mode toggle, sign-out button.                                                                                                                                                                                                                               |
+| `/login`                 | Login               | Email/password sign-in with show/hide password toggle and error display.                                                                                                                                                                                                                            |
+| `/register`              | Register            | Name, email, password, role registration form.                                                                                                                                                                                                                                                      |
+| `*`                      | 404                 | Not found page with gradient background and "Go Home" link.                                                                                                                                                                                                                                         |
 
 ---
 
@@ -195,7 +200,7 @@ Pharmaceutical field representatives visit dozens of HCPs daily. Traditional int
 
 ### LangGraph Agent Architecture
 
-The AI agent is a **LangGraph StateGraph** with 14+ nodes. When a user sends a message, the agent:
+The AI agent is a **LangGraph StateGraph** with 14+ nodes, featuring 6 core tools. When a user sends a message, the agent:
 
 1. **Detects intent** — LLM classifies the message into one of 11 intent categories
 2. **Routes to the correct tool node** — based on detected intent
@@ -222,57 +227,67 @@ AgentState:
 
 ### Intent Detection
 
-The `detect_intent` node uses an LLM prompt to classify user messages into one of 11 categories:
+The `detect_intent` node uses an LLM prompt to classify user messages. The 6 core intents map to the primary tools:
 
-| Intent | Trigger Examples |
-|--------|-----------------|
-| `log_interaction` | "I met Dr. Ravi today", "Log a meeting with Dr. Priya" |
-| `edit_interaction` | "Edit the last interaction", "Change interest level to High" |
-| `summarize` | "Summarize my last meeting", "What was discussed?" |
-| `followup` | "What should I do next?", "Recommend follow-up actions" |
-| `extract_entities` | "Extract entities from this text", "Find doctors and medicines" |
-| `sentiment` | "Analyze the sentiment", "How did the meeting feel?" |
-| `classify` | "Classify this meeting", "What type of meeting was this?" |
-| `search` | "Search for Metformin interactions", "Find Dr. Sharma's records" |
-| `history` | "Show my last 5 interactions", "What did I do this week?" |
-| `delete` | "Delete the last interaction", "Remove Dr. Patel's record" |
-| `dashboard` | "How many interactions this week?", "Show my stats" |
-| `general` | "Hello", "What can you do?", free-form questions |
+| Intent             | Tool                 | Trigger Examples                                                 |
+| ------------------ | -------------------- | ---------------------------------------------------------------- |
+| `log_interaction`  | Log Interaction      | "I met Dr. Ravi today", "Log a meeting with Dr. Priya"           |
+| `edit_interaction` | Edit                 | "Edit the last interaction", "Change interest level to High"     |
+| `summarize`        | Summarize            | "Summarize my last meeting", "What was discussed?"               |
+| `followup`         | Follow-up Recommend  | "What should I do next?", "Recommend follow-up actions"          |
+| `search`           | Search               | "Search for Metformin interactions", "Find Dr. Sharma's records" |
+| `delete`           | Delete               | "Delete the last interaction", "Remove Dr. Patel's record"       |
 
-### Tool Nodes
+### Additional Intents
 
-| Node | Tool | Capabilities |
-|------|------|-------------|
-| `log_interaction_node` | `log_interaction_tool` | Stepwise extraction (asks one question at a time for missing fields), date parsing ("today", "tomorrow", "next week"), duration parsing ("30 min", "1 hour"), saves to Interaction + HCP tables, logs to AILog, broadcasts WebSocket update |
-| `edit_interaction_node` | `edit_interaction_tool` | Parses natural language edit requests via LLM, finds interaction by ID or doctor name, applies field updates, parses dates |
-| `summarize_node` | `summarize_tool` | Retrieves latest interaction from DB, generates 150-word CRM summary via `SUMMARIZER_PROMPT` |
-| `followup_node` | `followup_tool` | Retrieves latest interaction, generates follow-up plan with talking points, priority, suggested products, clinical evidence, next visit agenda |
-| `extract_entities_node` | `entity_extraction_tool` | Extracts doctors, hospitals, medicines, diseases, symptoms via `MEDICAL_ENTITY_PROMPT` |
-| `sentiment_node` | `sentiment_analysis_tool` | Returns sentiment, confidence (0-1), key phrases, interest level, engagement score (0-100) |
-| `classify_node` | `meeting_classifier_tool` | Returns meeting type, effectiveness, next action, key topics, recommendations |
-| `search_node` | `search_interactions_tool` | Uses LLM to extract search parameters, queries DB with ILIKE filters on doctor, products, summary, discussion |
-| `history_node` | `show_history_tool` | Lists recent interactions ordered by date, supports doctor filter and count limit |
-| `delete_node` | `delete_interaction_tool` | Two-phase: first call finds record and asks for confirmation; second call executes deletion |
-| `confirm_delete_node` | `delete_interaction_tool` | Executes deletion after user confirms |
-| `cancel_delete_node` | — | Cancels pending deletion |
-| `dashboard_node` | `dashboard_assistant_tool` | Fetches dashboard stats, answers natural language questions about them |
-| `general_node` | — | Handles greetings and free-form queries using the general system prompt |
+| Intent             | Description                                                                |
+| ------------------ | -------------------------------------------------------------------------- |
+| `extract_entities` | Extract medical entities (doctors, hospitals, medicines)                   |
+| `sentiment`        | Analyze meeting sentiment and engagement                                   |
+| `classify`         | Classify meeting type and effectiveness                                    |
+| `history`          | Show recent interactions                                                   |
+| `dashboard`        | Answer questions about dashboard statistics                                |
+| `general`          | Handle greetings and free-form questions                                   |
+
+### Tool Nodes (6 Core Tools)
+
+| Node                    | Tool                       | Description                                                                                               |
+| ----------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `log_interaction_node`  | `log_interaction_tool`     | Stepwise extraction (asks one question at a time), date/duration parsing, saves to DB, broadcasts update  |
+| `edit_interaction_node` | `edit_interaction_tool`    | Natural language edit requests via LLM, finds interaction by ID or doctor name, applies field updates     |
+| `summarize_node`        | `summarize_tool`           | Retrieves latest interaction, generates 150-word CRM summary                                              |
+| `followup_node`         | `followup_tool`            | Generates follow-up plan with talking points, priority, suggested products, clinical evidence             |
+| `search_node`           | `search_interactions_tool` | Uses LLM to extract search parameters, queries DB with ILIKE filters                                      |
+| `delete_node`           | `delete_interaction_tool`  | Two-phase delete: first call asks for confirmation, second call executes deletion                         |
+
+### Additional Nodes
+
+| Node                    | Description                                                                |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `confirm_delete_node`   | Executes deletion after user confirms                                      |
+| `cancel_delete_node`    | Cancels pending deletion                                                   |
+| `extract_entities_node` | Extracts doctors, hospitals, medicines, diseases, symptoms                 |
+| `sentiment_node`        | Returns sentiment, confidence, key phrases, engagement score               |
+| `classify_node`         | Returns meeting type, effectiveness, next action, recommendations          |
+| `history_node`          | Lists recent interactions, supports doctor filter and count limit          |
+| `dashboard_node`        | Fetches dashboard stats, answers natural language questions                |
+| `general_node`          | Handles greetings and free-form queries                                    |
 
 ### System Prompts
 
-| Prompt | Purpose |
-|--------|---------|
-| `SYSTEM_PROMPT` | General AI CRM assistant behavior |
-| `INTENT_DETECTION_PROMPT` | Classify user intent with 11 categories and routing rules |
-| `HCP_EXTRACTION_PROMPT` | Full structured extraction of HCP interaction fields |
-| `STEPWISE_EXTRACTION_PROMPT` | Step-by-step extraction for missing fields |
-| `MEDICAL_ENTITY_PROMPT` | Extract medical entities as structured JSON |
-| `SUMMARIZER_PROMPT` | Generate 150-word CRM summaries |
-| `FOLLOWUP_PROMPT` | Generate follow-up recommendation JSON |
-| `SEARCH_QUERY_PROMPT` | Extract search parameters from natural language |
-| `DOCTOR_NAME_EXTRACT_PROMPT` | Extract doctor name from text |
-| `DASHBOARD_QUERY_PROMPT` | Answer dashboard statistics questions |
-| `TITLE_GENERATION_PROMPT` | Generate conversation titles |
+| Prompt                       | Purpose                                                   |
+| ---------------------------- | --------------------------------------------------------- |
+| `SYSTEM_PROMPT`              | General AI CRM assistant behavior                         |
+| `INTENT_DETECTION_PROMPT`    | Classify user intent with 11 categories and routing rules |
+| `HCP_EXTRACTION_PROMPT`      | Full structured extraction of HCP interaction fields      |
+| `STEPWISE_EXTRACTION_PROMPT` | Step-by-step extraction for missing fields                |
+| `MEDICAL_ENTITY_PROMPT`      | Extract medical entities as structured JSON               |
+| `SUMMARIZER_PROMPT`          | Generate 150-word CRM summaries                           |
+| `FOLLOWUP_PROMPT`            | Generate follow-up recommendation JSON                    |
+| `SEARCH_QUERY_PROMPT`        | Extract search parameters from natural language           |
+| `DOCTOR_NAME_EXTRACT_PROMPT` | Extract doctor name from text                             |
+| `DASHBOARD_QUERY_PROMPT`     | Answer dashboard statistics questions                     |
+| `TITLE_GENERATION_PROMPT`    | Generate conversation titles                              |
 
 ---
 
@@ -280,61 +295,61 @@ The `detect_intent` node uses an LLM prompt to classify user messages into one o
 
 ### Authentication
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Register new user. Returns JWT token + user object. |
-| POST | `/api/auth/login` | Authenticate user. Returns JWT token + user object. |
-| GET | `/api/auth/profile` | Get current user profile (requires Bearer token). |
+| Method | Endpoint             | Description                                         |
+| ------ | -------------------- | --------------------------------------------------- |
+| POST   | `/api/auth/register` | Register new user. Returns JWT token + user object. |
+| POST   | `/api/auth/login`    | Authenticate user. Returns JWT token + user object. |
+| GET    | `/api/auth/profile`  | Get current user profile (requires Bearer token).   |
 
 ### Interactions
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/interactions` | Create interaction. Broadcasts `DASHBOARD_UPDATED` via WebSocket. Returns 201. |
-| GET | `/api/interactions` | List interactions with pagination, search, and sorting. Query params: `page`, `page_size`, `search`, `sort_by`, `sort_order`. |
-| GET | `/api/interactions/{id}` | Get single interaction by ID. |
-| PUT | `/api/interactions/{id}` | Update interaction. Broadcasts `DASHBOARD_UPDATED`. |
-| DELETE | `/api/interactions/{id}` | Delete interaction. Returns 204. Broadcasts `DASHBOARD_UPDATED`. |
+| Method | Endpoint                 | Description                                                                                                                   |
+| ------ | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/interactions`      | Create interaction. Broadcasts `DASHBOARD_UPDATED` via WebSocket. Returns 201.                                                |
+| GET    | `/api/interactions`      | List interactions with pagination, search, and sorting. Query params: `page`, `page_size`, `search`, `sort_by`, `sort_order`. |
+| GET    | `/api/interactions/{id}` | Get single interaction by ID.                                                                                                 |
+| PUT    | `/api/interactions/{id}` | Update interaction. Broadcasts `DASHBOARD_UPDATED`.                                                                           |
+| DELETE | `/api/interactions/{id}` | Delete interaction. Returns 204. Broadcasts `DASHBOARD_UPDATED`.                                                              |
 
 ### AI
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/ai/chat` | Main AI chat endpoint. Runs the full LangGraph agent pipeline. Accepts `message` and optional `conversation_id`. Returns `response`, `tool_used`, `entities`, `conversation_id`. |
-| POST | `/api/ai/extract` | Extract structured fields from raw text via LLM. |
-| POST | `/api/ai/summarize` | Generate a CRM summary from text. |
-| POST | `/api/ai/followup` | Generate follow-up recommendations. |
-| POST | `/api/ai/edit` | Edit an interaction via natural language. |
-| POST | `/api/ai/entities` | Extract medical entities from text. |
-| POST | `/api/ai/sentiment` | Analyze sentiment of text. |
+| Method | Endpoint            | Description                                                                                                                                                                      |
+| ------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/ai/chat`      | Main AI chat endpoint. Runs the full LangGraph agent pipeline. Accepts `message` and optional `conversation_id`. Returns `response`, `tool_used`, `entities`, `conversation_id`. |
+| POST   | `/api/ai/extract`   | Extract structured fields from raw text via LLM.                                                                                                                                 |
+| POST   | `/api/ai/summarize` | Generate a CRM summary from text.                                                                                                                                                |
+| POST   | `/api/ai/followup`  | Generate follow-up recommendations.                                                                                                                                              |
+| POST   | `/api/ai/edit`      | Edit an interaction via natural language.                                                                                                                                        |
+| POST   | `/api/ai/entities`  | Extract medical entities from text.                                                                                                                                              |
+| POST   | `/api/ai/sentiment` | Analyze sentiment of text.                                                                                                                                                       |
 
 ### Conversations
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/conversations` | List all conversations for current user (with last message preview and message count). |
-| POST | `/api/conversations` | Create a new conversation. |
-| DELETE | `/api/conversations/{id}` | Delete conversation and all its messages. |
-| GET | `/api/conversations/{id}/messages` | Get all messages in a conversation. |
-| PUT | `/api/conversations/{id}/title` | Update conversation title (auto-generated by AI). |
+| Method | Endpoint                           | Description                                                                            |
+| ------ | ---------------------------------- | -------------------------------------------------------------------------------------- |
+| GET    | `/api/conversations`               | List all conversations for current user (with last message preview and message count). |
+| POST   | `/api/conversations`               | Create a new conversation.                                                             |
+| DELETE | `/api/conversations/{id}`          | Delete conversation and all its messages.                                              |
+| GET    | `/api/conversations/{id}/messages` | Get all messages in a conversation.                                                    |
+| PUT    | `/api/conversations/{id}/title`    | Update conversation title (auto-generated by AI).                                      |
 
 ### Dashboard
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/dashboard` | Returns: `total_hcps`, `interactions_today`, `pending_followups`, `weekly_meetings`, `weekly_activity[]`, `recent_activities[]`, `upcoming_followups[]`. |
+| Method | Endpoint         | Description                                                                                                                                              |
+| ------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/dashboard` | Returns: `total_hcps`, `interactions_today`, `pending_followups`, `weekly_meetings`, `weekly_activity[]`, `recent_activities[]`, `upcoming_followups[]`. |
 
 ### WebSocket
 
-| Protocol | Endpoint | Description |
-|----------|----------|-------------|
+| Protocol  | Endpoint                        | Description                                                                                                                                                     |
+| --------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | WebSocket | `/api/ws/dashboard?token={jwt}` | Real-time dashboard updates. Server pushes `{"type": "DASHBOARD_UPDATED"}` whenever interactions are created, updated, or deleted. JWT authentication required. |
 
 ### Health Check
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Returns `{"message": "AI-First CRM API", "version": "1.0.0", "status": "running"}`. |
+| Method | Endpoint | Description                                                                         |
+| ------ | -------- | ----------------------------------------------------------------------------------- |
+| GET    | `/`      | Returns `{"message": "AI-First CRM API", "version": "1.0.0", "status": "running"}`. |
 
 ---
 
@@ -342,77 +357,77 @@ The `detect_intent` node uses an LLM prompt to classify user messages into one o
 
 ### User
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | Integer | Primary Key, Indexed |
-| `name` | String(255) | NOT NULL |
-| `email` | String(255) | UNIQUE, Indexed, NOT NULL |
-| `password` | String(255) | NOT NULL (bcrypt hashed) |
-| `role` | String(50) | Default: `"field_rep"` |
-| `created_at` | DateTime | Default: `now()` |
+| Column       | Type        | Constraints               |
+| ------------ | ----------- | ------------------------- |
+| `id`         | Integer     | Primary Key, Indexed      |
+| `name`       | String(255) | NOT NULL                  |
+| `email`      | String(255) | UNIQUE, Indexed, NOT NULL |
+| `password`   | String(255) | NOT NULL (bcrypt hashed)  |
+| `role`       | String(50)  | Default: `"field_rep"`    |
+| `created_at` | DateTime    | Default: `now()`          |
 
 ### HCP (Healthcare Professional)
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | Integer | Primary Key, Indexed |
-| `doctor_name` | String(255) | NOT NULL, Indexed |
-| `hospital` | String(255) | Nullable |
-| `speciality` | String(255) | Nullable |
-| `city` | String(255) | Nullable |
-| `created_at` | DateTime | Default: `now()` |
+| Column        | Type        | Constraints          |
+| ------------- | ----------- | -------------------- |
+| `id`          | Integer     | Primary Key, Indexed |
+| `doctor_name` | String(255) | NOT NULL, Indexed    |
+| `hospital`    | String(255) | Nullable             |
+| `speciality`  | String(255) | Nullable             |
+| `city`        | String(255) | Nullable             |
+| `created_at`  | DateTime    | Default: `now()`     |
 
 ### Interaction
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | Integer | Primary Key, Indexed |
-| `hcp_id` | Integer | FK → `hcps.id`, Nullable |
-| `summary` | Text | Nullable |
-| `discussion` | Text | Nullable |
-| `products` | Text | Nullable (comma-separated) |
-| `competitors` | Text | Nullable (comma-separated) |
-| `sentiment` | String(50) | Nullable |
-| `interest_level` | String(50) | Nullable |
-| `interaction_date` | Date | Nullable |
-| `follow_up_date` | Date | Nullable |
-| `duration` | Integer | Nullable (minutes) |
-| `interaction_type` | String(50) | Nullable |
-| `created_by` | Integer | FK → `users.id`, Nullable |
-| `created_at` | DateTime | Default: `now()` |
-| `updated_at` | DateTime | Default: `now()`, on update: `now()` |
+| Column             | Type       | Constraints                          |
+| ------------------ | ---------- | ------------------------------------ |
+| `id`               | Integer    | Primary Key, Indexed                 |
+| `hcp_id`           | Integer    | FK → `hcps.id`, Nullable             |
+| `summary`          | Text       | Nullable                             |
+| `discussion`       | Text       | Nullable                             |
+| `products`         | Text       | Nullable (comma-separated)           |
+| `competitors`      | Text       | Nullable (comma-separated)           |
+| `sentiment`        | String(50) | Nullable                             |
+| `interest_level`   | String(50) | Nullable                             |
+| `interaction_date` | Date       | Nullable                             |
+| `follow_up_date`   | Date       | Nullable                             |
+| `duration`         | Integer    | Nullable (minutes)                   |
+| `interaction_type` | String(50) | Nullable                             |
+| `created_by`       | Integer    | FK → `users.id`, Nullable            |
+| `created_at`       | DateTime   | Default: `now()`                     |
+| `updated_at`       | DateTime   | Default: `now()`, on update: `now()` |
 
 ### Conversation
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | String(36) | Primary Key (UUID) |
-| `user_id` | Integer | FK → `users.id`, NOT NULL, Indexed |
-| `title` | String(255) | Default: `"New Chat"` |
-| `extracted_data` | Text | Nullable (JSON: accumulated entities + pending_deletion state) |
-| `created_at` | DateTime | Default: `now()` |
-| `updated_at` | DateTime | Default: `now()`, on update: `now()` |
+| Column           | Type        | Constraints                                                    |
+| ---------------- | ----------- | -------------------------------------------------------------- |
+| `id`             | String(36)  | Primary Key (UUID)                                             |
+| `user_id`        | Integer     | FK → `users.id`, NOT NULL, Indexed                             |
+| `title`          | String(255) | Default: `"New Chat"`                                          |
+| `extracted_data` | Text        | Nullable (JSON: accumulated entities + pending_deletion state) |
+| `created_at`     | DateTime    | Default: `now()`                                               |
+| `updated_at`     | DateTime    | Default: `now()`, on update: `now()`                           |
 
 ### Message
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | Integer | Primary Key, Indexed |
+| Column            | Type       | Constraints                                |
+| ----------------- | ---------- | ------------------------------------------ |
+| `id`              | Integer    | Primary Key, Indexed                       |
 | `conversation_id` | String(36) | FK → `conversations.id`, NOT NULL, Indexed |
-| `role` | String(50) | NOT NULL (`"user"` or `"assistant"`) |
-| `content` | Text | NOT NULL |
-| `created_at` | DateTime | Default: `now()` |
+| `role`            | String(50) | NOT NULL (`"user"` or `"assistant"`)       |
+| `content`         | Text       | NOT NULL                                   |
+| `created_at`      | DateTime   | Default: `now()`                           |
 
 ### AILog
 
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `id` | Integer | Primary Key, Indexed |
-| `prompt` | Text | Nullable |
-| `response` | Text | Nullable |
-| `tool` | String(100) | Nullable |
-| `execution_time` | Float | Nullable (seconds) |
-| `timestamp` | DateTime | Default: `now()` |
+| Column           | Type        | Constraints          |
+| ---------------- | ----------- | -------------------- |
+| `id`             | Integer     | Primary Key, Indexed |
+| `prompt`         | Text        | Nullable             |
+| `response`       | Text        | Nullable             |
+| `tool`           | String(100) | Nullable             |
+| `execution_time` | Float       | Nullable (seconds)   |
+| `timestamp`      | DateTime    | Default: `now()`     |
 
 ---
 
@@ -420,14 +435,14 @@ The `detect_intent` node uses an LLM prompt to classify user messages into one o
 
 ### Redux Store (6 Slices)
 
-| Slice | File | State | Async Thunks |
-|-------|------|-------|-------------|
-| `auth` | `authSlice.js` | `user`, `token`, `isAuthenticated`, `loading`, `error` | `login`, `register` |
-| `chat` | `chatSlice.js` | `messages[]`, `extracted`, `conversationId`, `loading`, `error` | `sendMessage`, `extractEntities` |
-| `conversations` | `conversationsSlice.js` | `conversations[]`, `activeConversationId`, `messages[]`, `loading`, `sending`, `error` | `fetchConversations`, `createConversation`, `deleteConversation`, `fetchMessages`, `sendChatMessage` |
-| `interactions` | `interactionSlice.js` | `items[]`, `total`, `current`, `page`, `pageSize`, `loading`, `error` | `fetchInteractions`, `fetchInteraction`, `createInteraction`, `updateInteraction`, `deleteInteraction` |
-| `dashboard` | `dashboardSlice.js` | `total_hcps`, `interactions_today`, `pending_followups`, `weekly_meetings`, `recentActivities[]`, `upcomingFollowups[]`, `weeklyActivity[]`, `loading`, `error` | `fetchDashboard` |
-| `ui` | `uiSlice.js` | `sidebarOpen`, `darkMode`, `loading`, `notification` | — (sync reducers only) |
+| Slice           | File                    | State                                                                                                                                                           | Async Thunks                                                                                           |
+| --------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `auth`          | `authSlice.js`          | `user`, `token`, `isAuthenticated`, `loading`, `error`                                                                                                          | `login`, `register`                                                                                    |
+| `chat`          | `chatSlice.js`          | `messages[]`, `extracted`, `conversationId`, `loading`, `error`                                                                                                 | `sendMessage`, `extractEntities`                                                                       |
+| `conversations` | `conversationsSlice.js` | `conversations[]`, `activeConversationId`, `messages[]`, `loading`, `sending`, `error`                                                                          | `fetchConversations`, `createConversation`, `deleteConversation`, `fetchMessages`, `sendChatMessage`   |
+| `interactions`  | `interactionSlice.js`   | `items[]`, `total`, `current`, `page`, `pageSize`, `loading`, `error`                                                                                           | `fetchInteractions`, `fetchInteraction`, `createInteraction`, `updateInteraction`, `deleteInteraction` |
+| `dashboard`     | `dashboardSlice.js`     | `total_hcps`, `interactions_today`, `pending_followups`, `weekly_meetings`, `recentActivities[]`, `upcomingFollowups[]`, `weeklyActivity[]`, `loading`, `error` | `fetchDashboard`                                                                                       |
+| `ui`            | `uiSlice.js`            | `sidebarOpen`, `darkMode`, `loading`, `notification`                                                                                                            | — (sync reducers only)                                                                                 |
 
 ---
 
@@ -474,18 +489,18 @@ The `detect_intent` node uses an LLM prompt to classify user messages into one o
 
 ### Custom CSS Classes
 
-| Class | Purpose |
-|-------|---------|
-| `.glass` | Frosted glass effect with backdrop blur |
-| `.card` | Standard card with rounded corners, border, shadow |
-| `.card-glass` | Glass variant of card |
-| `.btn-primary` | Blue primary button with shadow and active scale |
-| `.btn-secondary` | Gray secondary button |
-| `.btn-danger` | Red danger button |
-| `.input-field` | Form input with border, focus ring, transitions |
-| `.tab-active` / `.tab-inactive` | Tab button states |
-| `.scrollbar-hide` | Hides scrollbar across browsers |
-| `.animate-typing-dot` | Bouncing dot animation for typing indicator |
+| Class                           | Purpose                                            |
+| ------------------------------- | -------------------------------------------------- |
+| `.glass`                        | Frosted glass effect with backdrop blur            |
+| `.card`                         | Standard card with rounded corners, border, shadow |
+| `.card-glass`                   | Glass variant of card                              |
+| `.btn-primary`                  | Blue primary button with shadow and active scale   |
+| `.btn-secondary`                | Gray secondary button                              |
+| `.btn-danger`                   | Red danger button                                  |
+| `.input-field`                  | Form input with border, focus ring, transitions    |
+| `.tab-active` / `.tab-inactive` | Tab button states                                  |
+| `.scrollbar-hide`               | Hides scrollbar across browsers                    |
+| `.animate-typing-dot`           | Bouncing dot animation for typing indicator        |
 
 ### Responsive Breakpoints
 
@@ -497,15 +512,15 @@ The `detect_intent` node uses an LLM prompt to classify user messages into one o
 
 The `AssistantMessage` component renders AI responses with rich formatting:
 
-| Pattern | Rendering |
-|---------|-----------|
-| Lines starting with emoji (🎯📋✅🔍📅🔬💊📌💡🏥⚠️) | Bold section header |
-| Lines starting with ✓ or ✔ | Green checkmark item |
-| Lines starting with • or - | Dotted bullet item |
-| Lines starting with `N.` | Numbered list with circle badge |
-| Indented lines (4+ spaces) | Smaller gray subtext |
-| Empty lines | Vertical spacer |
-| All other text | Normal paragraph |
+| Pattern                                            | Rendering                       |
+| -------------------------------------------------- | ------------------------------- |
+| Lines starting with emoji (🎯📋✅🔍📅🔬💊📌💡🏥⚠️) | Bold section header             |
+| Lines starting with ✓ or ✔                         | Green checkmark item            |
+| Lines starting with • or -                         | Dotted bullet item              |
+| Lines starting with `N.`                           | Numbered list with circle badge |
+| Indented lines (4+ spaces)                         | Smaller gray subtext            |
+| Empty lines                                        | Vertical spacer                 |
+| All other text                                     | Normal paragraph                |
 
 ---
 
@@ -534,7 +549,7 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
-
+also add th
 # Configure environment
 cp .env.example .env
 # Edit .env with your GROQ_API_KEY and DATABASE_URL
@@ -569,29 +584,29 @@ The frontend runs on `http://localhost:5173` and proxies `/api` requests to the 
 
 ### Backend (`.env`)
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | `sqlite:///./ai_crm.db` | Database connection string |
-| `GROQ_API_KEY` | Yes | — | Groq API key for LLM |
-| `JWT_SECRET` | Yes | — | Secret key for JWT signing |
-| `JWT_ALGORITHM` | No | `HS256` | JWT signing algorithm |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | No | `1440` | Token expiry (24h) |
+| Variable                      | Required | Default                 | Description                |
+| ----------------------------- | -------- | ----------------------- | -------------------------- |
+| `DATABASE_URL`                | Yes      | `sqlite:///./ai_crm.db` | Database connection string |
+| `GROQ_API_KEY`                | Yes      | —                       | Groq API key for LLM       |
+| `JWT_SECRET`                  | Yes      | —                       | Secret key for JWT signing |
+| `JWT_ALGORITHM`               | No       | `HS256`                 | JWT signing algorithm      |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | No       | `1440`                  | Token expiry (24h)         |
 
 ### Frontend (`.env`)
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VITE_API_URL` | Yes | `http://localhost:8000/api` | Backend API base URL |
+| Variable       | Required | Default                     | Description          |
+| -------------- | -------- | --------------------------- | -------------------- |
+| `VITE_API_URL` | Yes      | `http://localhost:8000/api` | Backend API base URL |
 
 ---
 
 ## Deployment
 
-| Component | Platform | Notes |
-|-----------|----------|-------|
-| Frontend | Vercel | `npm run build`, deploy `dist/` folder. Auto-deploys from Git. |
-| Backend | Render / Railway | Deploy Python app. Set environment variables in dashboard. |
-| Database | Neon PostgreSQL | Free tier available. Update `DATABASE_URL` in backend `.env`. |
+| Component | Platform         | Notes                                                          |
+| --------- | ---------------- | -------------------------------------------------------------- |
+| Frontend  | Vercel           | `npm run build`, deploy `dist/` folder. Auto-deploys from Git. |
+| Backend   | Render / Railway | Deploy Python app. Set environment variables in dashboard.     |
+| Database  | Neon PostgreSQL  | Free tier available. Update `DATABASE_URL` in backend `.env`.  |
 
 ### Production Checklist
 
@@ -727,24 +742,25 @@ AI-First CRM/
 
 ## Code Metrics
 
-| Metric | Count |
-|--------|-------|
-| Backend Python files | 32 |
-| Frontend source files | 32 |
-| Total lines of code | ~5,200+ |
-| Database models | 6 (User, HCP, Interaction, Conversation, Message, AILog) |
-| Redux slices | 6 |
-| LangGraph agent nodes | 14+ |
-| System prompts | 11 |
-| API endpoints | 18 |
-| Frontend pages | 10 |
-| Shared UI components | 5 |
-| AI tools | 11 |
+| Metric                | Count                                                    |
+| --------------------- | -------------------------------------------------------- |
+| Backend Python files  | 32                                                       |
+| Frontend source files | 32                                                       |
+| Total lines of code   | ~5,200+                                                  |
+| Database models       | 6 (User, HCP, Interaction, Conversation, Message, AILog) |
+| Redux slices          | 6                                                        |
+| LangGraph agent nodes | 14+                                                      |
+| System prompts        | 11                                                       |
+| API endpoints         | 18                                                       |
+| Frontend pages        | 10                                                       |
+| Shared UI components  | 5                                                        |
+| AI tools              | 6 core + 8 additional                                               |
 
 ---
 
 ## License
 
 This project is proprietary software built for pharmaceutical CRM use.
-#   A I - C R M  
+#   A I - C R M 
+ 
  

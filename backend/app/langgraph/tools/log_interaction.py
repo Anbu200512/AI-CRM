@@ -20,6 +20,14 @@ WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", 
 
 llm = ChatGroq(api_key=settings.GROQ_API_KEY, model="llama-3.1-8b-instant")
 
+SAVE_CONFIRMATION_PATTERNS = [
+    "add this log", "add log", "save this", "save it", "log it",
+    "confirm", "yes save", "yes, save", "create this interaction",
+    "save interaction", "log this interaction", "add this interaction",
+    "proceed", "go ahead", "do it", "that's all", "thats all",
+    "done", "submit", "submit it",
+]
+
 
 def _parse_date(value):
     if not value:
@@ -174,88 +182,241 @@ def log_interaction_tool(conversation_text: str, user_id: Optional[int] = None, 
     logger.info("conversation_text: %.100s", conversation_text)
 
     is_stepwise = bool(current_state and current_state.get("_stage") != "complete")
-    if is_stepwise:
-        full_prompt = STEPWISE_EXTRACTION_PROMPT.format(text=conversation_text)
-        logger.info("Using STEPWISE_EXTRACTION_PROMPT (stepwise mode)")
+
+    # ── Save confirmation detection ────────────────────────────────────────
+    # If the user says "add this log" / "save it" etc. while in stepwise mode,
+    # skip LLM extraction and use ONLY the already-collected current_state.
+    lower_text = conversation_text.strip().lower()
+    is_save_confirmation = any(p in lower_text for p in SAVE_CONFIRMATION_PATTERNS)
+
+    # If save confirmation but no data collected yet, tell user to provide details first
+    if is_save_confirmation and not is_stepwise:
+        logger.info("Save confirmation but no prior data (current_state empty)")
+        return {
+            "success": False,
+            "merged_state": current_state,
+            "response_text": (
+                "I don't have an interaction ready to save. "
+                "Please provide the interaction details first — "
+                "for example, tell me the doctor name, hospital, products discussed, and other key information."
+            ),
+        }
+
+    if is_stepwise and is_save_confirmation:
+        logger.info("Save confirmation detected: '%s'", conversation_text.strip())
+        merged_state = dict(current_state)
+        merged_state.pop("_stage", None)
+
+        # Sanitize 'null' strings
+        for k, v in list(merged_state.items()):
+            if isinstance(v, str) and v.strip().lower() == "null":
+                merged_state[k] = None
+
+        # Check if all required fields are present
+        missing = []
+        for key, display in REQUIRED_FIELDS:
+            val = merged_state.get(key)
+            if val is None or val == "" or val == []:
+                missing.append(key)
+
+        if missing:
+            # Not all fields collected yet — tell user what's missing
+            checklist = _build_checklist_response(merged_state)
+            missing_names = [display for key, display in REQUIRED_FIELDS if key in missing]
+            response_parts = []
+            if checklist:
+                response_parts.append(checklist)
+            response_parts.append("")
+            response_parts.append(f"Still need the following before I can save:\n" + "\n".join(f"  • {name}" for name in missing_names))
+            response_parts.append("")
+            response_parts.append("Please provide the missing details above, or say 'cancel' to start over.")
+            merged_state["_stage"] = "collecting"
+            return {
+                "success": "partial",
+                "missing_fields": missing,
+                "merged_state": merged_state,
+                "response_text": "\n".join(response_parts),
+            }
+
+        # All fields present — save to database
+        logger.info("All fields present, saving from current_state (no LLM extraction)")
+        extracted = {}  # No LLM extraction needed
+        # merged_state is already set above; skip to DB save
+
+    elif is_stepwise:
+        pre_merge_missing = []
+        for key, _ in REQUIRED_FIELDS:
+            val = current_state.get(key)
+            if val is None or val == "" or val == []:
+                pre_merge_missing.append(key)
+        current_field = pre_merge_missing[0] if pre_merge_missing else "unknown"
+        collected = {k: v for k, v in current_state.items() if k != "_stage"}
+        collected_json = json.dumps(collected, indent=2, default=str)
+        full_prompt = STEPWISE_EXTRACTION_PROMPT.format(
+            current_field=current_field,
+            collected_json=collected_json,
+            text=conversation_text,
+        )
+        logger.info("Using STEPWISE_EXTRACTION_PROMPT (stepwise, current_field=%s)", current_field)
+
+        extracted = {}
+        try:
+            response = llm.invoke(full_prompt)
+            cleaned = response.content.strip() if response.content else ""
+
+            if not cleaned:
+                retry_prompt = (
+                    "Extract the value for \"{}\" from this user message: \"{}\"\n"
+                    "Also preserve these fields: {}\n"
+                    "Return ONLY a JSON object with all 13 fields. Set missing ones to null.\n"
+                    "JSON:"
+                ).format(current_field, conversation_text, collected_json)
+                logger.info("Empty response, retrying with simpler prompt")
+                response = llm.invoke(retry_prompt)
+                cleaned = response.content.strip() if response.content else ""
+
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            cleaned = cleaned.strip()
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                extracted = parsed
+                logger.info("LLM extracted keys: %s", list(extracted.keys()))
+            else:
+                logger.warning("LLM returned non-dict JSON: %s", type(parsed).__name__)
+        except Exception as e:
+            logger.error("LLM extraction failed: %s", str(e))
+            extracted = {}
+
+        if not extracted.get(current_field) and conversation_text.strip():
+            logger.info("Fallback: directly assigning '%s' to '%s'", conversation_text.strip(), current_field)
+            if current_field in ("products_discussed", "competitor_products"):
+                extracted[current_field] = [t.strip() for t in re.split(r",\s*|\s+and\s+", conversation_text.strip()) if t.strip()]
+            else:
+                extracted[current_field] = conversation_text.strip()
+
+        # Merge extracted into current_state
+        merged_state = dict(current_state)
+        merged_state.pop("_stage", None)
+        for k, v in list(merged_state.items()):
+            if isinstance(v, str) and v.strip().lower() == "null":
+                merged_state[k] = None
+        for key, val in extracted.items():
+            if val is None or val == "" or val == []:
+                continue
+            if isinstance(val, str) and val.strip().lower() == "null":
+                continue
+            existing = merged_state.get(key)
+            if _is_valid(existing):
+                logger.info("Preserving existing value for '%s'", key)
+                continue
+            merged_state[key] = val
+
+        # Check missing fields
+        missing_fields = []
+        for key, display_name in REQUIRED_FIELDS:
+            val = merged_state.get(key)
+            if val is None or val == "" or val == []:
+                missing_fields.append(key)
+
+        if missing_fields:
+            next_field = missing_fields[0]
+            checklist = _build_checklist_response(merged_state)
+            question = _get_question(next_field, merged_state)
+            parts = []
+            if checklist:
+                parts.append(checklist)
+            else:
+                parts.append("I'd be happy to log this interaction for you. Let's start.")
+            parts.append("")
+            parts.append(question)
+            merged_state["_stage"] = "collecting"
+            return {
+                "success": "partial",
+                "next_field": next_field,
+                "missing_fields": missing_fields,
+                "merged_state": merged_state,
+                "response_text": "\n".join(parts),
+            }
+
+        logger.info("All required fields collected via stepwise, saving to database")
+
     else:
+        # Full extraction mode (first call)
         full_prompt = f"{HCP_EXTRACTION_PROMPT}\n\nText: {conversation_text}"
         logger.info("Using HCP_EXTRACTION_PROMPT (full extraction mode)")
 
-    extracted = {}
-    try:
-        response = llm.invoke(full_prompt)
-        cleaned = response.content.strip()
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-        cleaned = cleaned.strip()
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            extracted = parsed
-            logger.info("LLM extracted keys: %s", list(extracted.keys()))
-        else:
-            logger.warning("LLM returned non-dict JSON: %s", type(parsed).__name__)
-    except Exception as e:
-        logger.error("LLM extraction failed: %s", str(e))
         extracted = {}
+        try:
+            response = llm.invoke(full_prompt)
+            cleaned = response.content.strip() if response.content else ""
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            cleaned = cleaned.strip()
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                extracted = parsed
+                logger.info("LLM extracted keys: %s", list(extracted.keys()))
+            else:
+                logger.warning("LLM returned non-dict JSON: %s", type(parsed).__name__)
+        except Exception as e:
+            logger.error("LLM extraction failed: %s", str(e))
+            extracted = {}
 
-    merged_state = {}
-    if isinstance(current_state, dict):
+        # Merge extracted into current_state
         merged_state = dict(current_state)
-    else:
-        logger.warning("current_state is not a dict, type=%s, starting fresh", type(current_state).__name__)
+        merged_state.pop("_stage", None)
+        for k, v in list(merged_state.items()):
+            if isinstance(v, str) and v.strip().lower() == "null":
+                merged_state[k] = None
+        for key, val in extracted.items():
+            if val is None or val == "" or val == []:
+                continue
+            if isinstance(val, str) and val.strip().lower() == "null":
+                continue
+            existing = merged_state.get(key)
+            if _is_valid(existing):
+                continue
+            merged_state[key] = val
 
-    merged_state.pop("_stage", None)
+        # Check missing fields
+        missing_fields = []
+        for key, display_name in REQUIRED_FIELDS:
+            val = merged_state.get(key)
+            if val is None or val == "" or val == []:
+                missing_fields.append(key)
+
+        if missing_fields:
+            next_field = missing_fields[0]
+            checklist = _build_checklist_response(merged_state)
+            question = _get_question(next_field, merged_state)
+            parts = []
+            if checklist:
+                parts.append(checklist)
+            else:
+                parts.append("I'd be happy to log this interaction for you. Let's start.")
+            parts.append("")
+            parts.append(question)
+            merged_state["_stage"] = "collecting"
+            return {
+                "success": "partial",
+                "next_field": next_field,
+                "missing_fields": missing_fields,
+                "merged_state": merged_state,
+                "response_text": "\n".join(parts),
+            }
+
+        logger.info("All required fields collected via full extraction, saving to database")
+
+    # ── Database save (common path for all three branches) ──────────────────
+    # At this point, merged_state has all required fields populated.
+    # extracted is either {} (save confirmation) or contains LLM results (already merged).
 
     for k, v in list(merged_state.items()):
         if isinstance(v, str) and v.strip().lower() == "null":
-            logger.info("Sanitized 'null' string for key '%s'", k)
             merged_state[k] = None
 
-    for key, val in extracted.items():
-        if val is None or val == "" or val == []:
-            continue
-        if isinstance(val, str) and val.strip().lower() == "null":
-            logger.info("Skipped 'null' string from extraction for key '%s'", key)
-            continue
-        existing = merged_state.get(key)
-        if _is_valid(existing):
-            logger.info("Preserving existing value for '%s', new extraction skipped", key)
-            continue
-        merged_state[key] = val
-        logger.info("Merged new value for key '%s': %.80s", key, str(val))
-
-    logger.info("merged_state after merging, keys: %s", list(merged_state.keys()))
-
-    missing_fields = []
-    for key, display_name in REQUIRED_FIELDS:
-        val = merged_state.get(key)
-        if val is None or val == "" or val == []:
-            missing_fields.append(key)
-
-    if missing_fields:
-        next_field = missing_fields[0]
-        logger.info("Missing fields: %s, next field: %s", missing_fields, next_field)
-
-        checklist = _build_checklist_response(merged_state)
-        question = _get_question(next_field, merged_state)
-
-        parts = []
-        if checklist:
-            parts.append(checklist)
-        else:
-            parts.append("I'd be happy to log this interaction for you. Let's start.")
-        parts.append("")
-        parts.append(question)
-
-        merged_state["_stage"] = "collecting"
-
-        return {
-            "success": "partial",
-            "next_field": next_field,
-            "missing_fields": missing_fields,
-            "merged_state": merged_state,
-            "response_text": "\n".join(parts),
-        }
+    logger.info("merged_state before save, keys: %s", list(merged_state.keys()))
 
     logger.info("All required fields collected, saving to database")
     db = SessionLocal()

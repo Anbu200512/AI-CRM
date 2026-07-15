@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
@@ -114,6 +115,9 @@ def chat(data: ChatMessage, db: Session = Depends(get_db), current_user: User = 
         result = agent_app.invoke(initial_state)
         ai_response = result.get("response", "I couldn't process that request.")
     except Exception as e:
+        logger.error("Agent invoke failed: %s", str(e), exc_info=True)
+        tb = traceback.format_exc()
+        logger.error("Full traceback:\n%s", tb)
         ai_msg = Message(
             conversation_id=conv.id,
             role="assistant",
@@ -205,7 +209,13 @@ def followup(data: FollowUpRequest, current_user: User = Depends(get_current_use
 
 @router.post("/edit")
 def edit(data: dict, current_user: User = Depends(get_current_user)):
-    result = edit_interaction_tool.invoke({"edit_request": data.get("message", ""), "interaction_id": data.get("interaction_id", 0)})
+    result = edit_interaction_tool.invoke({
+        "edit_request": data.get("message", ""),
+        "interaction_id": data.get("interaction_id", 0),
+        "user_id": current_user.id,
+        "edit_context": data.get("edit_context", {}),
+        "conversation_history": data.get("conversation_history", []),
+    })
     return result
 
 

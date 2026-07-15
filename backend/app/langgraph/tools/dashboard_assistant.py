@@ -20,9 +20,7 @@ def dashboard_assistant_tool(question: str, user_id: Optional[int] = None) -> Di
     db = SessionLocal()
     try:
         data = get_dashboard_data(db, user_id)
-        stats = data.get("stats", {})
 
-        # Build upcoming follow-ups summary
         upcoming = data.get("upcoming_followups", [])
         upcoming_summary = ""
         if upcoming:
@@ -30,10 +28,10 @@ def dashboard_assistant_tool(question: str, user_id: Optional[int] = None) -> Di
             upcoming_summary = f"Upcoming follow-ups: {', '.join(names)}" + (f" and {len(upcoming)-3} more" if len(upcoming) > 3 else "")
 
         stats_text = (
-            f"Total HCPs in CRM: {stats.get('total_hcps', 0)}\n"
-            f"Interactions logged today: {stats.get('interactions_today', 0)}\n"
-            f"Pending follow-ups: {stats.get('pending_followups', 0)}\n"
-            f"Meetings this week: {stats.get('weekly_meetings', 0)}\n"
+            f"Total HCPs in CRM: {data.get('total_hcps', 0)}\n"
+            f"Interactions logged today: {data.get('interactions_today', 0)}\n"
+            f"Pending follow-ups: {data.get('pending_followups', 0)}\n"
+            f"Meetings this week: {data.get('weekly_meetings', 0)}\n"
         )
         if upcoming_summary:
             stats_text += f"{upcoming_summary}\n"
@@ -41,7 +39,7 @@ def dashboard_assistant_tool(question: str, user_id: Optional[int] = None) -> Di
         response = llm.invoke(DASHBOARD_QUERY_PROMPT.format(stats=stats_text, question=question))
         return {
             "answer": response.content.strip(),
-            "stats": stats,
+            "stats": data,
         }
     finally:
         db.close()

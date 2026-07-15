@@ -1,7 +1,8 @@
 import json
 import logging
 import re
-from typing import Literal, Optional
+import time
+from typing import Dict, Literal, Optional
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
 from app.config.settings import settings
@@ -29,6 +30,45 @@ CONFIRM_WORDS = {"yes", "confirm", "delete", "proceed", "go ahead", "sure", "ok"
 CANCEL_WORDS = {"no", "cancel", "abort", "stop", "nevermind", "never mind"}
 GREETING_WORDS = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening", "greetings", "howdy"]
 FORGOT_PATTERNS = ["forgot", "add more", "add one more", "add another", "missed something", "also want", "also need"]
+EDIT_PATTERNS = ["edit", "update", "modify", "replace", "change", "correct", "reschedule"]
+
+LOG_INTERACTION_NARRATIVE_PATTERNS = [
+    r"\bi\s+met\b",
+    r"\bi\s+visited\b",
+    r"\bi\s+had\s+a\s+meeting\b",
+    r"\bi\s+had\s+a\s+visit\b",
+    r"\bwe\s+discussed\b",
+    r"\bi\s+discussed\b",
+    r"\bi\s+presented\b",
+    r"\bi\s+introduced\b",
+    r"\bi\s+demonstrated\b",
+    r"\bvisited\s+(?:dr\.?|doctor)",
+    r"\bmet\s+(?:dr\.?|doctor)",
+    r"\bmeeting\s+lasted\b",
+    r"\bmeeting\s+duration\b",
+    r"\blog\s+(?:a|an|the|this|my|that|new)?\s*(?:new\s+)?(?:log|meeting|interaction|visit|call|entry)",
+    r"\badd\s+(?:a\s+)?(?:new\s+)?(?:log|interaction|meeting|visit|call|entry)",
+    r"\badd\s+this\s+as\s+(?:a\s+)?(?:log|interaction|meeting|visit|call)",
+    r"\brecord\s+(?:a|an|the|this|my|that)\s+(?:meeting|interaction|visit|call)",
+    r"\bsave\s+(?:this|the|a|my|that)\s+(?:meeting|interaction|visit|call|log)",
+    r"\bproduct\s+discussion",
+    r"\bproduct\s+demo",
+]
+
+NARRATIVE_DETAIL_SIGNALS = [
+    (r"(?:dr\.?|doctor)\s+\w+(?:\s+\w+)?", "doctor_name"),
+    (r"(?:hospital|clinic|medical\s+center|healthcare)", "hospital"),
+    (r"(?:cardiolog|neurolog|oncolog|pediatr|dermatolog|orthoped|endocrin|gastro|pulmon|urol|ophthalm|general\s+pract|physician|surgeon)", "speciality"),
+    (r"(?:discussed|presented|introduced|demonstrated|showed|explained)", "discussion_verb"),
+    (r"(?:product|drug|medication|medicine|therap|tablet|capsule|injection|dose|mg\b|dosage)", "product"),
+    (r"(?:interest(?:ed)?|enthusiastic|positive\s+response)", "interest"),
+    (r"(?:follow.?up|next\s+(?:visit|meeting|call|appointment))", "follow_up"),
+    (r"(?:duration|lasted|minutes?|hours?|mins?)", "duration"),
+    (r"(?:requested|asked\s+for|wanted|needs)\s+(?:clinical|evidence|data|samples|information|brochure)", "requested_material"),
+    (r"(?:high|medium|low)\s+(?:interest|level)", "interest_level"),
+    (r"(?:positive|negative|neutral)", "sentiment"),
+    (r"(?:initial\s+visit|follow.?up\s+visit|product\s+discussion|product\s+demo|conference|phone\s+call|online\s+meeting)", "interaction_type"),
+]
 
 
 def _is_greeting(text: str) -> bool:
@@ -64,7 +104,119 @@ def _get_full_conversation_text(messages: list) -> str:
     return "\n".join(parts)
 
 
+def _has_explicit_search_intent(text: str) -> bool:
+    """Check if the message is an EXPLICIT search request like 'show interactions' or 'find Dr. X'."""
+    lower = text.strip().lower()
+    has_search_verb = any(re.search(r'\b' + p + r'\b', lower) for p in ["show", "search", "find", "list", "display", "get", "retrieve"])
+    has_search_target = any(re.search(p, lower) for p in [
+        r"(?:all|my|the|recent|last)\s+(?:interactions?|meetings?|visits?|records?|history|logs?|doctors?)",
+        r"interactions?\s+(?:with|at|from|for|related)",
+        r"meetings?\s+(?:with|at|from|for)",
+    ])
+    return has_search_verb and has_search_target
+
+
+def _detect_explicit_action_intent(text: str) -> Optional[str]:
+    """Check if the message starts with an explicit action verb that determines the intent.
+
+    Returns the intent string if found, None otherwise.
+    This runs BEFORE narrative detection so that 'Summarize my interaction with Dr. X'
+    is correctly classified as summarize, not log_interaction.
+    """
+    lower = text.strip().lower()
+
+    if re.match(r'^\s*(?:summarize|summary|recap|give\s+(?:me\s+)?(?:a\s+)?summary|overview|takeaway)', lower):
+        return "summarize"
+
+    if re.match(r'^\s*(?:recommend|suggest|follow.?up|what\s+should|what\s+(?:is|are)\s+(?:the\s+)?(?:recommended|suggested|priority|next)|how\s+should|next\s+(?:action|visit|meeting)|(?:generate|give|provide|create)\s+(?:me\s+)?(?:a\s+)?(?:follow.?up|recommendation|suggestion|talking\s+points|priority|clinical\s+evidence|visit\s+agenda|action\s+plan))', lower):
+        return "followup_recommendation"
+
+    if re.match(r'^\s*(?:edit|update|modify|replace|change|correct|reschedule)', lower):
+        return "edit_interaction"
+
+    if re.match(r'^\s*(?:show|search|find|list|display|get|retrieve)', lower):
+        return "search_interactions"
+
+    if re.match(r'^\s*(?:delete|remove)', lower):
+        return "delete_interaction"
+
+    if re.match(r'^\s*(?:log|record|save|add\s+(?:a\s+)?(?:new\s+)?(?:log|interaction|meeting|visit|call|entry))', lower):
+        return "log_interaction"
+
+    return None
+
+
+def _detect_interaction_narrative(text: str) -> Dict[str, any]:
+    """Detect if the message is a complete interaction narrative.
+
+    Returns a dict with:
+      - is_narrative: bool
+      - confidence: float  (0.0 - 1.0)
+      - matched_patterns: list of pattern descriptions
+      - reason: str explaining why it was classified this way
+    """
+    lower = text.strip().lower()
+    words = lower.split()
+    matched = []
+    reason_parts = []
+
+    if re.match(r'^\s*(?:generate|give|provide|create|recommend|suggest|follow.?up|what\s+should|what\s+(?:is|are)\s+(?:the\s+)?(?:recommended|suggested|priority|next)|how\s+should|next\s+(?:action|visit|meeting))', lower):
+        return {
+            "is_narrative": False,
+            "confidence": 0.0,
+            "matched_patterns": [],
+            "reason": "follow-up/recommendation keyword at start, not a narrative",
+        }
+
+    has_log_verb = any(re.search(p, lower) for p in LOG_INTERACTION_NARRATIVE_PATTERNS)
+    if has_log_verb:
+        matched.append("log_verb")
+        reason_parts.append("explicit log/action verb detected")
+
+    detail_count = 0
+    detail_types = []
+    for pattern, label in NARRATIVE_DETAIL_SIGNALS:
+        if re.search(pattern, lower):
+            detail_count += 1
+            detail_types.append(label)
+
+    if detail_count >= 1:
+        matched.extend(detail_types)
+
+    length_score = min(len(words) / 20.0, 1.0)
+    has_doctor = "doctor_name" in detail_types
+
+    if has_log_verb:
+        confidence = 0.6 + (detail_count * 0.1) + (length_score * 0.15)
+        confidence = min(confidence, 1.0)
+        is_narrative = True
+    elif has_doctor and detail_count >= 2 and len(words) >= 4:
+        confidence = 0.45 + (detail_count * 0.12) + (length_score * 0.15)
+        confidence = min(confidence, 0.9)
+        is_narrative = True
+        reason_parts.append("doctor name with %d detail signals" % detail_count)
+    elif detail_count >= 3 and len(words) >= 8:
+        confidence = 0.4 + (detail_count * 0.1) + (length_score * 0.15)
+        confidence = min(confidence, 0.85)
+        is_narrative = True
+        reason_parts.append("%d detail signals in long message" % detail_count)
+    else:
+        confidence = 0.0
+        is_narrative = False
+        reason_parts.append("insufficient narrative signals (details=%d, words=%d)" % (detail_count, len(words)))
+
+    reason = "; ".join(reason_parts) if reason_parts else "no narrative indicators"
+
+    return {
+        "is_narrative": is_narrative,
+        "confidence": round(confidence, 2),
+        "matched_patterns": matched,
+        "reason": reason,
+    }
+
+
 def detect_intent(state: AgentState) -> AgentState:
+    start_time = time.time()
     messages = state.get("conversation", [])
     last_message = ""
     if messages and isinstance(messages, list) and len(messages) > 0:
@@ -76,37 +228,172 @@ def detect_intent(state: AgentState) -> AgentState:
         logger.warning("entities is not a dict in detect_intent, type=%s, resetting", type(entities).__name__)
         entities = {}
 
-    # If mid-log-interaction, continue collecting
-    if entities.get("_stage") == "collecting":
-        logger.info("detect_intent: _stage=collecting, routing to log_interaction_node")
-        state["intent"] = "log_interaction"
+    lower_msg = last_message.strip().lower()
+    detected_intent = None
+    confidence = 0.0
+    tool_name = "general_node"
+    reason = ""
+
+    if not last_message.strip():
+        state["intent"] = "general_query"
+        _log_intent_detection(last_message, "general_query", 0.0, "general_node", 0.0, "empty message")
         return state
 
-    # Check if there's a pending deletion and user is confirming/cancelling
+    if entities.get("_stage") == "collecting":
+        override_intent = _detect_explicit_action_intent(last_message)
+        if override_intent and override_intent != "log_interaction":
+            logger.info(
+                "[INTENT_DETECT] Breaking out of collecting state: user expressed %s, clearing entities",
+                override_intent,
+            )
+            state["entities"] = {}
+        else:
+            detected_intent = "log_interaction"
+            confidence = 1.0
+            tool_name = "log_interaction_node"
+            reason = "mid-interaction collection in progress"
+            state["intent"] = detected_intent
+            _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
+            return state
+
     pending = state.get("pending_deletion")
     if pending and pending.get("needs_confirmation"):
-        lower = last_message.strip().lower()
-        if any(w in lower for w in CONFIRM_WORDS):
-            state["intent"] = "confirm_delete"
-        elif any(w in lower for w in CANCEL_WORDS):
-            state["intent"] = "cancel_delete"
+        if any(w in lower_msg for w in CONFIRM_WORDS):
+            detected_intent = "confirm_delete"
+            confidence = 1.0
+            tool_name = "confirm_delete_node"
+            reason = "user confirmed pending deletion"
+        elif any(w in lower_msg for w in CANCEL_WORDS):
+            detected_intent = "cancel_delete"
+            confidence = 1.0
+            tool_name = "cancel_delete_node"
+            reason = "user cancelled pending deletion"
         else:
-            state["intent"] = "delete_interaction"
+            detected_intent = "delete_interaction"
+            confidence = 0.8
+            tool_name = "delete_node"
+            reason = "pending deletion awaiting confirmation"
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
         return state
 
-    # Check for "forgot something" / "add more" patterns → edit_interaction
-    lower_msg = last_message.strip().lower()
+    explicit_intent = _detect_explicit_action_intent(last_message)
+    if explicit_intent:
+        detected_intent = explicit_intent
+        if explicit_intent == "log_interaction":
+            confidence = 0.95
+            tool_name = "log_interaction_node"
+            reason = "explicit log/record/save verb at message start"
+        elif explicit_intent == "summarize":
+            confidence = 0.95
+            tool_name = "summarize_node"
+            reason = "explicit summarize/summary keyword at message start"
+        elif explicit_intent == "followup_recommendation":
+            confidence = 0.9
+            tool_name = "followup_node"
+            reason = "explicit recommend/suggest/follow-up keyword at message start"
+        elif explicit_intent == "edit_interaction":
+            confidence = 0.9
+            tool_name = "edit_interaction_node"
+            reason = "explicit edit/update/modify verb at message start"
+        elif explicit_intent == "search_interactions":
+            confidence = 0.85
+            tool_name = "search_node"
+            reason = "explicit show/search/find verb at message start"
+        elif explicit_intent == "delete_interaction":
+            confidence = 0.9
+            tool_name = "delete_node"
+            reason = "explicit delete/remove verb at message start"
+        else:
+            confidence = 0.8
+            tool_name = route_intent({"intent": explicit_intent})
+            reason = "explicit action verb detected at message start"
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
+        return state
+
+    narrative_result = _detect_interaction_narrative(last_message)
+    if narrative_result["is_narrative"]:
+        detected_intent = "log_interaction"
+        confidence = narrative_result["confidence"]
+        tool_name = "log_interaction_node"
+        reason = "interaction narrative detected: %s (matched: %s)" % (narrative_result["reason"], ", ".join(narrative_result["matched_patterns"]))
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
+        return state
+
     if any(p in lower_msg for p in FORGOT_PATTERNS):
-        state["intent"] = "edit_interaction"
+        detected_intent = "edit_interaction"
+        confidence = 0.95
+        tool_name = "edit_interaction_node"
+        reason = "forgot/add-more pattern detected (edit context)"
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
+        return state
+
+    if any(re.search(r'\b' + p + r'\b', lower_msg) for p in EDIT_PATTERNS):
+        detected_intent = "edit_interaction"
+        confidence = 0.85
+        tool_name = "edit_interaction_node"
+        reason = "edit verb detected in message"
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
+        return state
+
+    SEARCH_PATTERNS = ["show", "search", "find", "list", "display", "get", "retrieve"]
+    if any(re.search(r'\b' + p + r'\b', lower_msg) for p in SEARCH_PATTERNS):
+        detected_intent = "search_interactions"
+        confidence = 0.7
+        tool_name = "search_node"
+        reason = "search verb detected (no narrative or edit signals)"
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
+        return state
+
+    SUMMARIZE_PATTERNS = ["summarize", "summary", "recap", "overview", "takeaway"]
+    if any(re.search(r'\b' + p + r'\b', lower_msg) for p in SUMMARIZE_PATTERNS):
+        detected_intent = "summarize"
+        confidence = 0.95
+        tool_name = "summarize_node"
+        reason = "summarize keyword detected (no narrative/edit/search signals)"
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
+        return state
+
+    FOLLOWUP_PATTERNS = ["recommend", "recommendation", "recommended", "followup", "follow-up", "follow up", "agenda", "talking", "priority"]
+    FOLLOWUP_PHRASES = [r"next\s+(?:action|visit|meeting)", r"what\s+should\s+I\s+(?:do|discuss)\s+next", r"action\s+plan", r"(?:generate|give|provide|create)\s+(?:me\s+)?(?:a\s+)?(?:follow.?up|recommendation|suggestion|talking\s+points|clinical\s+evidence|visit\s+agenda)"]
+    if any(re.search(r'\b' + p + r'\b', lower_msg) for p in FOLLOWUP_PATTERNS) or \
+       any(re.search(p, lower_msg) for p in FOLLOWUP_PHRASES):
+        detected_intent = "followup_recommendation"
+        confidence = 0.9
+        tool_name = "followup_node"
+        reason = "follow-up keyword detected (no narrative/edit/search signals)"
+        state["intent"] = detected_intent
+        _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
         return state
 
     try:
         response = llm.invoke(f"{INTENT_DETECTION_PROMPT}\n\nMessage: {last_message}")
-        intent = response.content.strip().lower()
+        detected_intent = response.content.strip().lower()
+        confidence = 0.6
+        tool_name = route_intent({"intent": detected_intent})
+        reason = "LLM fallback classification"
     except Exception:
-        intent = "general_query"
-    state["intent"] = intent
+        detected_intent = "general_query"
+        confidence = 0.3
+        tool_name = "general_node"
+        reason = "LLM call failed, defaulting to general"
+    state["intent"] = detected_intent
+    _log_intent_detection(last_message, detected_intent, confidence, tool_name, time.time() - start_time, reason)
     return state
+
+
+def _log_intent_detection(message: str, intent: str, confidence: float, tool: str, elapsed: float, reason: str = ""):
+    """Log structured intent detection with full diagnostics."""
+    logger.info(
+        "[INTENT_DETECT] message=%.150s | intent=%s | confidence=%.2f | tool=%s | reason=%s | elapsed=%.3fs",
+        message.strip(), intent, confidence, tool, reason, elapsed,
+    )
 
 
 def route_intent(state: AgentState) -> str:
@@ -163,11 +450,25 @@ def log_interaction_node(state: AgentState) -> AgentState:
         current_state.get("_stage"),
     )
 
-    result = log_interaction_tool.invoke({
-        "conversation_text": text,
-        "user_id": state.get("user_id"),
-        "current_state": current_state,
-    })
+    try:
+        result = log_interaction_tool.invoke({
+            "conversation_text": text,
+            "user_id": state.get("user_id"),
+            "current_state": current_state,
+        })
+    except Exception as e:
+        logger.error("log_interaction_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = f"Sorry, I encountered an error. Please try again. ({str(e)})"
+        state["tool_used"] = "log_interaction"
+        state["entities"] = current_state
+        return state
+
+    if not isinstance(result, dict):
+        logger.error("log_interaction_tool returned non-dict: %s", type(result).__name__)
+        state["response"] = "Sorry, I encountered an unexpected error. Please try again."
+        state["tool_used"] = "log_interaction"
+        state["entities"] = current_state
+        return state
 
     state["database_result"] = result
     state["tool_used"] = "log_interaction"
@@ -197,20 +498,64 @@ def log_interaction_node(state: AgentState) -> AgentState:
 def edit_interaction_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    result = edit_interaction_tool.invoke({
-        "edit_request": text,
-        "interaction_id": state.get("interaction", {}).get("id", 0),
-        "user_id": state.get("user_id"),
-    })
+    entities = state.get("entities", {})
+    if not isinstance(entities, dict):
+        entities = {}
+
+    # Build conversation context for the tool (last 10 messages)
+    recent_messages = messages[-10:] if isinstance(messages, list) else []
+
+    # Pass interaction_id from entities (for edit context persistence)
+    interaction_id = state.get("interaction", {}).get("id", 0)
+    if not interaction_id:
+        interaction_id = entities.get("_edit_interaction_id", 0)
+
+    logger.info(
+        "edit_interaction_node: text=%.80s, interaction_id=%s, user_id=%s, entities_keys=%s",
+        text, interaction_id, state.get("user_id"), list(entities.keys()),
+    )
+
+    try:
+        result = edit_interaction_tool.invoke({
+            "edit_request": text,
+            "interaction_id": interaction_id,
+            "user_id": state.get("user_id"),
+            "edit_context": entities,
+            "conversation_history": recent_messages,
+        })
+    except Exception as e:
+        logger.error("edit_interaction_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error editing the interaction. Please try again."
+        state["tool_used"] = "edit_interaction"
+        return state
+
     state["database_result"] = result
     state["tool_used"] = "edit_interaction"
 
+    # Handle "awaiting_fields" — user expressed edit intent but didn't specify what
+    if result.get("success") == "awaiting_fields":
+        interaction_id_result = result.get("interaction_id", 0)
+        new_entities = dict(entities)
+        new_entities["_edit_interaction_id"] = interaction_id_result
+        state["entities"] = new_entities
+        state["response"] = result.get("response_text", "What would you like to change?")
+        return state
+
     if result.get("success"):
         updates = result.get("updates", {})
-        field_lines = "\n".join([f"  • {k.replace('_', ' ').title()}: {v}" for k, v in updates.items()])
+        updated_fields = result.get("updated_fields", [])
+        interaction_id_result = result.get("interaction_id", 0)
+
+        # Persist interaction_id in entities for subsequent edits
+        new_entities = dict(entities)
+        new_entities["_edit_interaction_id"] = interaction_id_result
+        state["entities"] = new_entities
+
+        # Build professional confirmation
+        field_lines = "\n".join([f"  {name}: {val}" for name, val in updates.items()])
         state["response"] = (
-            f"✅ Interaction Updated Successfully\n\n"
-            f"📋 Changes Made:\n{field_lines}"
+            f"Updated Fields:\n{field_lines}\n\n"
+            f"The interaction has been updated successfully."
         )
     else:
         state["response"] = f"Could not update the interaction. {result.get('error', 'Record not found.')}"
@@ -223,27 +568,20 @@ def edit_interaction_node(state: AgentState) -> AgentState:
 def summarize_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    doctor_name = _extract_doctor_name(text)
 
-    result = summarize_tool.invoke({
-        "text": text,
-        "user_id": state.get("user_id"),
-        "doctor_name": doctor_name,
-    })
+    try:
+        result = summarize_tool.invoke({
+            "query_text": text,
+            "user_id": state.get("user_id"),
+        })
+    except Exception as e:
+        logger.error("summarize_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error generating the summary. Please try again."
+        state["tool_used"] = "summarize"
+        return state
     state["summary"] = result.get("summary")
     state["tool_used"] = "summarize"
-
-    if result.get("found_in_db"):
-        state["response"] = (
-            f"📋 Meeting Summary\n\n"
-            f"Doctor: {result.get('doctor_name', '')}\n"
-            f"Hospital: {result.get('hospital', '')}\n"
-            f"Date: {result.get('interaction_date', '')}\n\n"
-            f"{result.get('summary', '')}"
-        )
-    else:
-        state["response"] = result.get("summary", "No interaction found.")
-
+    state["response"] = result.get("summary", "No interaction found.")
     return state
 
 
@@ -256,38 +594,67 @@ def followup_node(state: AgentState) -> AgentState:
         last = messages[-1]
         if isinstance(last, dict):
             text = last.get("content", "")
-    doctor_name = _extract_doctor_name(text)
 
-    result = followup_tool.invoke({
-        "interaction_summary": text,
-        "user_id": state.get("user_id"),
-        "doctor_name": doctor_name,
-    })
+    try:
+        result = followup_tool.invoke({
+            "query_text": text,
+            "user_id": state.get("user_id"),
+        })
+    except Exception as e:
+        logger.error("followup_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error generating follow-up recommendations. Please try again."
+        state["tool_used"] = "followup"
+        return state
     state["database_result"] = result
     state["tool_used"] = "followup"
 
-    if not result.get("found_in_db", True):
-        state["response"] = result.get("reasoning", "No previous interaction found.")
+    if result.get("error"):
+        state["response"] = result["error"]
         return state
 
+    if not result.get("found_in_db", True):
+        state["response"] = result.get("reasoning", "No interactions were found matching your request.")
+        return state
+
+    if result.get("recommendation_type") == "multiple" or result.get("count", 0) > 1:
+        state["response"] = _format_multi_recommendation(result)
+    else:
+        state["response"] = _format_single_recommendation(result)
+    return state
+
+
+def _format_single_recommendation(result: Dict) -> str:
+    """Format a single follow-up recommendation into readable text."""
     lines = []
     lines.append("Follow-up Recommendation")
     lines.append("")
 
-    doctor = result.get("doctor_name") or doctor_name or "Unknown"
-    lines.append(f"Doctor")
+    doctor = result.get("doctor_name", "Unknown")
+    lines.append("Doctor")
     lines.append(doctor)
     lines.append("")
 
+    hospital = result.get("hospital", "")
+    if hospital:
+        lines.append("Hospital")
+        lines.append(hospital)
+        lines.append("")
+
     priority = result.get("priority", "N/A")
-    lines.append(f"Priority")
+    lines.append("Priority")
     lines.append(priority)
     lines.append("")
 
     followup_date = result.get("next_follow_up", "N/A")
-    lines.append(f"Next Follow-up Date")
+    lines.append("Next Follow-up Date")
     lines.append(followup_date)
     lines.append("")
+
+    reasoning = result.get("reasoning")
+    if reasoning:
+        lines.append("Reasoning")
+        lines.append(reasoning)
+        lines.append("")
 
     tp = result.get("talking_points", [])
     if tp:
@@ -298,7 +665,7 @@ def followup_node(state: AgentState) -> AgentState:
 
     sp = result.get("suggested_products", [])
     if sp:
-        lines.append("Suggested Products")
+        lines.append("Recommended Products")
         for p in sp:
             lines.append(f"  • {p}")
         lines.append("")
@@ -317,13 +684,60 @@ def followup_node(state: AgentState) -> AgentState:
             lines.append(f"  • {a}")
         lines.append("")
 
-    reasoning = result.get("reasoning")
-    if reasoning:
-        lines.append("Reasoning")
-        lines.append(reasoning)
+    return "\n".join(lines)
 
-    state["response"] = "\n".join(lines)
-    return state
+
+def _format_multi_recommendation(result: Dict) -> str:
+    """Format a multi follow-up recommendation into readable text."""
+    lines = []
+    lines.append("Follow-up Recommendations")
+    lines.append("")
+
+    summary = result.get("summary", "")
+    if summary:
+        lines.append("Overall Summary")
+        lines.append(summary)
+        lines.append("")
+
+    high = result.get("high_priority", [])
+    if high:
+        lines.append("High Priority Doctors")
+        for doc in high:
+            lines.append(f"  • {doc.get('doctor_name', 'Unknown')} – {doc.get('hospital', '')} | Follow-up: {doc.get('next_follow_up', 'N/A')}")
+            if doc.get("reasoning"):
+                lines.append(f"    {doc['reasoning']}")
+        lines.append("")
+
+    medium = result.get("medium_priority", [])
+    if medium:
+        lines.append("Medium Priority Doctors")
+        for doc in medium:
+            lines.append(f"  • {doc.get('doctor_name', 'Unknown')} – {doc.get('hospital', '')} | Follow-up: {doc.get('next_follow_up', 'N/A')}")
+            if doc.get("reasoning"):
+                lines.append(f"    {doc['reasoning']}")
+        lines.append("")
+
+    low = result.get("low_priority", [])
+    if low:
+        lines.append("Low Priority Doctors")
+        for doc in low:
+            lines.append(f"  • {doc.get('doctor_name', 'Unknown')} – {doc.get('hospital', '')} | Follow-up: {doc.get('next_follow_up', 'N/A')}")
+        lines.append("")
+
+    schedule = result.get("recommended_schedule")
+    if schedule:
+        lines.append("Recommended Schedule")
+        lines.append(schedule)
+        lines.append("")
+
+    upcoming = result.get("upcoming_followups", [])
+    if upcoming:
+        lines.append("Upcoming Follow-ups")
+        for u in upcoming:
+            lines.append(f"  • {u.get('doctor_name', 'Unknown')} – {u.get('follow_up_date', 'N/A')} ({u.get('priority', 'Medium')})")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 # ─── ENTITY EXTRACTION ────────────────────────────────────────────────────────
@@ -331,7 +745,13 @@ def followup_node(state: AgentState) -> AgentState:
 def extract_entities_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    result = entity_extraction_tool.invoke({"text": text})
+    try:
+        result = entity_extraction_tool.invoke({"text": text})
+    except Exception as e:
+        logger.error("entity_extraction_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error extracting entities. Please try again."
+        state["tool_used"] = "entity_extraction"
+        return state
     state["entities"] = result
     state["tool_used"] = "entity_extraction"
 
@@ -357,7 +777,13 @@ def sentiment_node(state: AgentState) -> AgentState:
         last = messages[-1]
         if isinstance(last, dict):
             text = last.get("content", "")
-    result = sentiment_analysis_tool.invoke({"text": text})
+    try:
+        result = sentiment_analysis_tool.invoke({"text": text})
+    except Exception as e:
+        logger.error("sentiment_analysis_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error analyzing sentiment. Please try again."
+        state["tool_used"] = "sentiment_analysis"
+        return state
     state["database_result"] = result
     state["tool_used"] = "sentiment_analysis"
 
@@ -394,7 +820,13 @@ def classify_node(state: AgentState) -> AgentState:
         last = messages[-1]
         if isinstance(last, dict):
             text = last.get("content", "")
-    result = meeting_classifier_tool.invoke({"text": text})
+    try:
+        result = meeting_classifier_tool.invoke({"text": text})
+    except Exception as e:
+        logger.error("meeting_classifier_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error classifying the meeting. Please try again."
+        state["tool_used"] = "meeting_classifier"
+        return state
     state["database_result"] = result
     state["tool_used"] = "meeting_classifier"
 
@@ -430,10 +862,16 @@ def classify_node(state: AgentState) -> AgentState:
 def search_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    result = search_interactions_tool.invoke({
-        "query_text": text,
-        "user_id": state.get("user_id"),
-    })
+    try:
+        result = search_interactions_tool.invoke({
+            "query_text": text,
+            "user_id": state.get("user_id"),
+        })
+    except Exception as e:
+        logger.error("search_interactions_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error searching interactions. Please try again."
+        state["tool_used"] = "search_interactions"
+        return state
     state["database_result"] = result
     state["tool_used"] = "search_interactions"
 
@@ -457,10 +895,16 @@ def search_node(state: AgentState) -> AgentState:
 def history_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    result = show_history_tool.invoke({
-        "query_text": text,
-        "user_id": state.get("user_id"),
-    })
+    try:
+        result = show_history_tool.invoke({
+            "query_text": text,
+            "user_id": state.get("user_id"),
+        })
+    except Exception as e:
+        logger.error("show_history_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error retrieving history. Please try again."
+        state["tool_used"] = "show_history"
+        return state
     state["database_result"] = result
     state["tool_used"] = "show_history"
 
@@ -485,11 +929,17 @@ def history_node(state: AgentState) -> AgentState:
 def delete_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    result = delete_interaction_tool.invoke({
-        "query_text": text,
-        "user_id": state.get("user_id"),
-        "confirmed": False,
-    })
+    try:
+        result = delete_interaction_tool.invoke({
+            "query_text": text,
+            "user_id": state.get("user_id"),
+            "confirmed": False,
+        })
+    except Exception as e:
+        logger.error("delete_interaction_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error deleting the interaction. Please try again."
+        state["tool_used"] = "delete_interaction"
+        return state
     state["database_result"] = result
     state["tool_used"] = "delete_interaction"
 
@@ -502,11 +952,17 @@ def delete_node(state: AgentState) -> AgentState:
 def confirm_delete_node(state: AgentState) -> AgentState:
     pending = state.get("pending_deletion", {})
     user_id = state.get("user_id")
-    result = delete_interaction_tool.invoke({
-        "query_text": pending.get("doctor_name", ""),
-        "user_id": user_id,
-        "confirmed": True,
-    })
+    try:
+        result = delete_interaction_tool.invoke({
+            "query_text": pending.get("doctor_name", ""),
+            "user_id": user_id,
+            "confirmed": True,
+        })
+    except Exception as e:
+        logger.error("delete_interaction_tool.invoke (confirm) failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error deleting the interaction. Please try again."
+        state["tool_used"] = "delete_interaction"
+        return state
     state["database_result"] = result
     state["tool_used"] = "delete_interaction"
     state["pending_deletion"] = None
@@ -526,10 +982,16 @@ def cancel_delete_node(state: AgentState) -> AgentState:
 def dashboard_node(state: AgentState) -> AgentState:
     messages = state.get("conversation", [])
     text = messages[-1]["content"] if messages else ""
-    result = dashboard_assistant_tool.invoke({
-        "question": text,
-        "user_id": state.get("user_id"),
-    })
+    try:
+        result = dashboard_assistant_tool.invoke({
+            "question": text,
+            "user_id": state.get("user_id"),
+        })
+    except Exception as e:
+        logger.error("dashboard_assistant_tool.invoke failed: %s", str(e), exc_info=True)
+        state["response"] = "Sorry, I encountered an error retrieving dashboard data. Please try again."
+        state["tool_used"] = "dashboard_query"
+        return state
     state["database_result"] = result
     state["tool_used"] = "dashboard_query"
     state["response"] = result.get("answer", "Could not retrieve dashboard data.")

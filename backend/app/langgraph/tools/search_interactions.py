@@ -16,7 +16,7 @@ llm = ChatGroq(api_key=settings.GROQ_API_KEY, model="llama-3.1-8b-instant")
 
 @tool
 def search_interactions_tool(query_text: str, user_id: Optional[int] = None) -> Dict[str, Any]:
-    """Search CRM interactions by doctor name, product name, speciality, or keyword."""
+    """Search CRM interactions by doctor name, hospital, product name, speciality, date, or keyword."""
     # Extract search parameters from user's message
     try:
         response = llm.invoke(f"{SEARCH_QUERY_PROMPT}\n\nMessage: {query_text}")
@@ -28,8 +28,13 @@ def search_interactions_tool(query_text: str, user_id: Optional[int] = None) -> 
         params = {"keyword": query_text, "limit": 5}
 
     doctor_name = params.get("doctor_name")
+    hospital = params.get("hospital")
     product_name = params.get("product_name")
     speciality = params.get("speciality")
+    interaction_date = params.get("interaction_date")
+    follow_up_date = params.get("follow_up_date")
+    interest_level = params.get("interest_level")
+    interaction_type = params.get("interaction_type")
     keyword = params.get("keyword")
     limit = int(params.get("limit") or 5)
 
@@ -43,13 +48,24 @@ def search_interactions_tool(query_text: str, user_id: Optional[int] = None) -> 
 
         if doctor_name:
             query = query.filter(HCP.doctor_name.ilike(f"%{doctor_name}%"))
+        if hospital:
+            query = query.filter(HCP.hospital.ilike(f"%{hospital}%"))
         if product_name:
             query = query.filter(Interaction.products.ilike(f"%{product_name}%"))
         if speciality:
             query = query.filter(HCP.speciality.ilike(f"%{speciality}%"))
-        if keyword and not any([doctor_name, product_name, speciality]):
+        if interaction_date:
+            query = query.filter(Interaction.interaction_date == interaction_date)
+        if follow_up_date:
+            query = query.filter(Interaction.follow_up_date == follow_up_date)
+        if interest_level:
+            query = query.filter(Interaction.interest_level.ilike(f"%{interest_level}%"))
+        if interaction_type:
+            query = query.filter(Interaction.interaction_type.ilike(f"%{interaction_type}%"))
+        if keyword and not any([doctor_name, hospital, product_name, speciality]):
             query = query.filter(
                 HCP.doctor_name.ilike(f"%{keyword}%") |
+                HCP.hospital.ilike(f"%{keyword}%") |
                 Interaction.products.ilike(f"%{keyword}%") |
                 Interaction.summary.ilike(f"%{keyword}%") |
                 Interaction.discussion.ilike(f"%{keyword}%")
